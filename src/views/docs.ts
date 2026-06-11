@@ -50,7 +50,7 @@ function eyeSprite(dx: number, dy: number, blink = false): string[] {
   const halfY = EYE_H >> 1, maxDy = halfY;           // ...and onto the lids vertically
   const cx = halfX + Math.max(-maxDx, Math.min(maxDx, Math.round(dx)));
   const cy = halfY + Math.max(-maxDy, Math.min(maxDy, Math.round(dy)));
-  rows[cy][cx] = "O";                                // pupil roams x and y
+  rows[cy][cx] = "@";                                // pupil roams x and y
   return rows.map((r) => r.join(""));
 }
 

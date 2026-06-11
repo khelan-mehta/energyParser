@@ -136,10 +136,12 @@ function renderWorkspace(root: HTMLElement, p: Project) {
 
   root.querySelector("#mk-back")!.addEventListener("click", () => { store.currentProject = null; rerender(root); });
   root.querySelector("#mk-edit")!.addEventListener("click", () => editProjectModal(root, p));
-  root.querySelector("#mk-export")?.addEventListener("click", () => {
-    const wb = buildWorkbook(store.blRows, store.propRows, store.rates);
-    downloadWorkbook(wb, `${p.name.replace(/\W+/g, "_")}_energy_results.xlsx`);
-    toast("✓ Excel downloaded");
+  root.querySelector("#mk-export")?.addEventListener("click", async () => {
+    try {
+      const wb = await buildWorkbook(store.blRows, store.propRows, store.rates);
+      downloadWorkbook(wb, `${p.name.replace(/\W+/g, "_")}_energy_results.xlsx`);
+      toast("✓ Excel downloaded");
+    } catch (e: any) { toast("Export failed — " + e.message); }
   });
 
   // model selection (reparse with another model)

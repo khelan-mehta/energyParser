@@ -59,9 +59,9 @@ export async function runParse(): Promise<boolean> {
   return true;
 }
 
-export function generateExcel() {
+export async function generateExcel() {
   const out = store.outputName || "energy_results.xlsx";
-  const wb = buildWorkbook(store.blRows, store.propRows, store.rates);
+  const wb = await buildWorkbook(store.blRows, store.propRows, store.rates);
   downloadWorkbook(wb, out);
   logLine(`<span class="ok">✓ Saved → ${out}</span>`);
 }

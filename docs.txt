@@ -1,0 +1,315 @@
+==================================================================
+ MARCUS — ENERGY MODEL STUDIO
+ A plain-English guide to what this software is and does
+==================================================================
+
+(The app is named "Marcus." That's just the product name — the name is
+the only nod to its namesake, nothing more. Everything below is about
+what the tool actually does.)
+
+
+------------------------------------------------------------------
+1. THE ONE-PARAGRAPH VERSION
+------------------------------------------------------------------
+
+Engineers who design buildings run "energy models" — computer
+simulations that predict how much electricity, gas, and water a
+building will use in a year. Those simulations spit out enormous,
+messy report files (hundreds of pages of raw text or PDF). Today
+someone has to read through those files by hand and copy dozens of
+numbers into spreadsheets. Marcus does that reading and copying
+automatically. You upload the simulation file, click a button, and a
+few seconds later you get clean charts and a tidy, color-coded Excel
+spreadsheet with every important number already filled in. It also
+figures out local electricity/gas/water prices for you, lets a whole
+team share projects, and keeps everything organized and secure.
+
+
+------------------------------------------------------------------
+2. WHAT PROBLEM IT SOLVES (AND HOW MUCH TIME IT SAVES)
+------------------------------------------------------------------
+
+The old way:
+  - Open a giant simulation report (a ".SIM" text file can be tens of
+    thousands of lines; a TRACE PDF can be hundreds of pages).
+  - Hunt through it for ~130 specific numbers (energy use, peak loads,
+    wall/window areas, equipment efficiencies, etc.).
+  - Hand-type each one into an Excel template.
+  - Repeat for the "baseline" building and the "proposed" building.
+  - Look up local utility prices on government websites.
+  - Re-type everything again into the official LEED calculator.
+
+  This is slow (often a half-day to a full day per project) and very
+  easy to get wrong — one mistyped number can throw off a whole report.
+
+The Marcus way:
+  - Upload the file(s), click "Parse."
+  - In seconds you get all the numbers, charts, and a finished Excel.
+  - Prices are fetched automatically with sources attached.
+  - The LEED calculator can be auto-filled too.
+
+  Rough efficiency gain: a task that took HOURS (and a second person to
+  double-check) becomes a few SECONDS of clicking, with the numbers
+  pulled straight from the source file so there are no typos. For a team
+  running many buildings, that's the difference between days of work and
+  an afternoon. (Exact savings depend on project size, but the jump is
+  from "hours each" to "seconds each.")
+
+
+------------------------------------------------------------------
+3. THE PARSERS (THE "READERS")
+------------------------------------------------------------------
+
+A "parser" is just a reader: it opens a file, finds the meaningful
+numbers, and organizes them. Marcus has several, and they all produce
+the SAME tidy result, so it doesn't matter which simulation tool your
+engineer used.
+
+  a) eQUEST parser  (files ending in .SIM and .inp)
+     eQUEST is a popular free building-energy simulator (built on an
+     engine called DOE-2). It produces a ".SIM" text report and an
+     ".inp" input file. Marcus reads both: the .SIM gives the results
+     (energy, peaks, areas), and the optional .inp adds extra detail
+     (window properties, equipment efficiencies, shading). You upload a
+     "baseline" version and a "proposed" version of the building.
+
+  b) TRACE 3D Plus parser  (a PDF report)
+     TRACE is another widely used energy simulator (from Trane). Its
+     output is a big PDF. Marcus reads the PDF right in your browser,
+     finds the relevant tables (energy by end-use, areas, windows,
+     unmet comfort hours, costs), and turns them into the same tidy
+     numbers as the eQUEST path.
+
+  c) IES-VE  (capability noted — under development)
+     IES-VE is a third major energy-simulation tool used by many firms.
+     Marcus is built to add an IES-VE reader so those users get the
+     exact same one-click experience. In the app it appears as a model
+     choice marked "under development" — the slot and plumbing are in
+     place; the reader itself is being finished. Once live, IES-VE files
+     will flow into the identical charts and Excel output as everything
+     else.
+
+  Why "same result" matters: no matter which tool produced the model,
+  you get one consistent set of numbers, one consistent dashboard, and
+  one consistent Excel file. Teams don't have to learn three formats.
+
+
+------------------------------------------------------------------
+4. THE MEPC PARSER (LEED COMPLIANCE HELPER)
+------------------------------------------------------------------
+
+"MEPC" stands for Minimum Energy Performance Calculator. It is the
+official Excel workbook (an ".xlsm" macro spreadsheet) that the USGBC
+requires for LEED building certification. Filling it out by hand is
+tedious and error-prone — it has many tabs (General Info, Results,
+Windows/Shading, Wall/Roof assemblies, Lighting, Process Loads) and
+each needs specific numbers pulled from the simulation.
+
+The MEPC parser in Marcus does this for you:
+
+  - It reads the eQUEST simulation (and, if you have it, a validated
+    "QA export" of the metrics, plus the four required "rotations" of
+    the baseline building that LEED asks for).
+
+  - It calculates everything LEED wants: energy by end-use converted
+    into the right units (kWh and therms), peak demand, floor area,
+    unmet comfort hours, savings percentages, window-to-wall ratios by
+    direction, roof/wall/window thermal values, lighting power density,
+    and more.
+
+  - Then it offers two outputs:
+      1) "Copy-paste tables" — a clean Excel with 5 ready-made sheets
+         you can paste straight into the official calculator.
+      2) "Auto-fill the official .xlsm" — it opens the real LEED
+         template and writes the numbers directly into the correct
+         cells, HIGHLIGHTING every cell it filled in YELLOW so a
+         reviewer can see exactly what was auto-entered. It even flips
+         the spreadsheet to recalculate its formulas when you open it.
+
+  In short: the MEPC parser turns a multi-hour, finicky LEED data-entry
+  chore into a one-click, color-coded, ready-to-submit spreadsheet.
+
+
+------------------------------------------------------------------
+5. THE EXCEL OUTPUT (WHAT YOU GET)
+------------------------------------------------------------------
+
+Every parser produces the same downloadable Excel file
+("energy_results.xlsx") with two tabs: "BL Data" (baseline building)
+and "Proposed Data" (the designed building). It has ~130 columns
+covering energy, cost, carbon, peaks, building geometry, windows,
+insulation values, equipment efficiencies, and airflow.
+
+The spreadsheet is styled to a fixed standard so every report looks
+identical and professional:
+  - Column groups are color-coded (e.g. energy = green, end-uses =
+    orange, water = purple, costs/carbon = gray, geometry = lime,
+    construction values = red, peaks = blue).
+  - Headers are bold white text on the colored background, Calibri font,
+    with borders and proper number formatting (commas, dollar signs,
+    decimals) on every cell.
+
+This matches the reference format the firm already uses, so the output
+drops straight into existing workflows.
+
+
+------------------------------------------------------------------
+6. UTILITY-RATE INTELLIGENCE (AUTOMATIC PRICE LOOKUP)
+------------------------------------------------------------------
+
+To turn energy use into dollars and carbon emissions, you need local
+prices and emission factors. Marcus finds these for you:
+
+  - Type the project address; it locates the region automatically.
+  - It pulls electricity, gas, carbon, and water figures from multiple
+    sources: live government/industry databases (NREL utility-rate
+    database, the U.S. EIA energy data, NREL Cambium grid data) plus
+    built-in reference tables (EIA prices, EPA eGRID emissions, water-
+    pricing data). If those don't cover it, it can ask ChatGPT as a
+    last resort.
+  - EVERY number comes with a citation and a clickable source link,
+    color-coded by trust level:
+        green = government data
+        yellow = article/blog
+        red = ChatGPT estimate
+        white = you typed it manually
+  - It shows a comparison chart (your state vs. others), lets you pick
+    units, and lets you save a "rate set" to reuse on other projects.
+
+Because every applied value is cited, the cost/carbon results are
+defensible and auditable — you can always show where a number came from.
+
+
+------------------------------------------------------------------
+7. AI SEARCH
+------------------------------------------------------------------
+
+After parsing, there's a search box where you can ask plain questions
+like "what's the cooling energy?" or "south window-to-wall ratio?" and
+get the exact value back, told which field and which model it came from.
+(This uses an OpenAI key configured in settings.)
+
+
+------------------------------------------------------------------
+8. PROJECT MANAGEMENT (HOW WORK IS ORGANIZED)
+------------------------------------------------------------------
+
+Marcus is built around "projects" so a team can manage many buildings
+at once:
+
+  - Each project has a name, an address, and a chosen model type
+    (eQUEST / TRACE / IES-VE).
+  - You upload that project's files; they're stored safely on the server
+    under that project.
+  - Parsed results and the chosen utility rates are SAVED to the project,
+    so you can close it and come back later — nothing is lost.
+  - You can re-parse the same project with a different simulation tool if
+    needed.
+  - A "Dashboard" rolls up EVERY project into a single company-wide view
+    (combined energy, EUI, carbon, and cost across the whole portfolio),
+    so leadership can see the big picture at a glance.
+  - There's also built-in "LEED Guidance" reference material for the
+    energy/cost rules used in certification.
+
+The main screens are:
+    Dashboard       — company-wide combined analysis across all projects
+    Marcus (Studio) — create/open a project, upload, parse, view charts,
+                      confirm rates, export Excel, AI search
+    Utility Rates   — find and manage electricity/gas/carbon/water prices
+    LEED Guidance   — reference rules and formulas for certification
+    Admin           — (admins only) approve users and manage roles
+
+
+------------------------------------------------------------------
+9. ROLE-BASED ACCESS (WHO CAN SEE AND DO WHAT)
+------------------------------------------------------------------
+
+The app has secure sign-in and two roles:
+
+  - USER: a normal team member. They can create projects, upload files,
+    parse, and export — but they can ONLY see their OWN projects.
+
+  - ADMIN: a manager. Admins can see and open EVERY project from every
+    user, and they get an "Admin" tab to approve or reject new sign-ups
+    and to promote/demote people between user and admin.
+
+How approval works:
+  - The VERY FIRST person to sign up automatically becomes the admin and
+    is approved instantly (so the system has an owner from day one).
+  - Everyone who signs up afterward is put in a "pending" state and
+    cannot log in until an admin approves them. This stops random people
+    from getting in.
+
+Security under the hood (plain version):
+  - Passwords are never stored as plain text — they're scrambled
+    (hashed) so even someone with database access can't read them.
+  - Logins use a secure token (JWT) that the browser keeps; it proves
+    who you are on each request and expires after 30 days.
+  - The server double-checks on every action that you're allowed to
+    touch that project (you can't reach someone else's project by
+    guessing its address unless you're an admin).
+
+
+------------------------------------------------------------------
+10. WHAT YOU NEED TO BUILD / RUN IT
+------------------------------------------------------------------
+
+This is a web application with two halves: a "backend" (the server that
+stores data and handles logins) and a "frontend" (the web pages you
+click around in).
+
+Requirements (one-time setup):
+  - Node.js installed on the computer (it's the runtime that runs the
+    app). Comes with "npm," a tool that downloads the needed building
+    blocks.
+  - That's essentially it — no database server to install; data is kept
+    in simple files on disk.
+
+To set it up and run it (simple, single-command way):
+    npm install      <- downloads all the building blocks (one time)
+    npm run build     <- assembles the web pages into a final "dist" folder
+    npm start         <- starts the app
+  Then open a web browser to:  http://localhost:3001
+  The first account you create becomes the admin.
+
+For developers working on the code (live-reload way, two windows):
+    npm run server    <- starts the backend on port 3001
+    npm run dev       <- starts the frontend on port 5173 (auto-refreshes)
+  Then open:  http://localhost:5173
+
+The building blocks it relies on (so you know what's involved):
+  - Express          — the web server (backend)
+  - Vite + TypeScript — builds the frontend web pages
+  - Chart.js          — draws the charts
+  - pdf.js            — reads TRACE PDF reports in the browser
+  - xlsx / JSZip      — creates and edits Excel files
+  - bcrypt + JWT      — password scrambling and secure login tokens
+  - multer            — handles file uploads
+
+Where data lives:
+  - Accounts and projects are stored in a file on the server
+    (server/data/db.json).
+  - Uploaded simulation files live in server/uploads/, organized per
+    project.
+
+
+------------------------------------------------------------------
+11. A TYPICAL START-TO-FINISH WORKFLOW
+------------------------------------------------------------------
+
+  1. Sign in (or sign up and wait for an admin to approve you).
+  2. Go to the Studio, click "New Project," give it a name + address,
+     and pick the simulation tool you used (eQUEST / TRACE / IES-VE).
+  3. Upload your files (baseline + proposed .SIM/.inp, or a TRACE PDF).
+  4. Click "Parse." Watch the live log; in seconds you get the results.
+  5. Review the "Project Analysis" charts (energy, EUI, carbon, cost).
+  6. Open "Utility Rates," let it find local prices (each with a source),
+     and confirm them.
+  7. Click "Export Excel" to download the finished, color-coded workbook.
+  8. (For LEED) use the MEPC tool to generate the copy-paste tables or
+     auto-fill the official LEED calculator.
+  9. Everything is saved to the project; come back anytime.
+
+==================================================================
+ END
+==================================================================
