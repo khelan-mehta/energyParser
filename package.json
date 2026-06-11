@@ -1,0 +1,30 @@
+{
+  "name": "energy-parser",
+  "private": true,
+  "version": "4.0.0",
+  "type": "module",
+  "description": "Marcus — multi-model energy parser studio (eQUEST / TRACE / IES-VE) with projects, users, utility-rate intelligence. Express backend + Vite/TS frontend.",
+  "scripts": {
+    "dev": "vite",
+    "server": "node server/index.js",
+    "dev:all": "node server/index.js & vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "chart.js": "^4.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "jszip": "^3.10.1",
+    "multer": "^1.4.5-lts.1",
+    "pdfjs-dist": "^4.10.38",
+    "xlsx-js-style": "^1.2.0"
+  }
+}

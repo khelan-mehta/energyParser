@@ -1,0 +1,1969 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>epAutomate &mdash; SIM &rarr; Excel</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+        :root {
+            --red: #E4002B;
+            --red-dark: #b30022;
+            --red-muted: rgba(228, 0, 43, 0.08);
+            --black: #0a0a0a;
+            --white: #fff;
+            --gray-50: #f9f9f9;
+            --gray-100: #f1f1f1;
+            --gray-200: #e4e4e4;
+            --gray-300: #c8c8c8;
+            --gray-400: #a0a0a0;
+            --gray-500: #6e6e6e;
+            --gray-700: #3a3a3a;
+            --border: 1px solid var(--gray-200);
+            --radius: 6px;
+            --shadow: 0 1px 3px rgba(0, 0, 0, .06), 0 4px 16px rgba(0, 0, 0, .06);
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f5f5;
+            color: var(--black);
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        header {
+            background: var(--black);
+            padding: 0 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 56px;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-logo {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 20px;
+            color: var(--white);
+            letter-spacing: -0.5px;
+        }
+
+        .brand-logo .red {
+            color: var(--red);
+        }
+
+        .brand-pipe {
+            width: 1px;
+            height: 20px;
+            background: rgba(255, 255, 255, .15);
+        }
+
+        .brand-tag {
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            color: rgba(255, 255, 255, .45);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: rgba(255, 255, 255, .35);
+            letter-spacing: 0.5px;
+        }
+
+        .header-right .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1 }
+            50% { opacity: .4 }
+        }
+
+        main {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 32px 24px 80px;
+        }
+
+        .hero {
+            margin-bottom: 28px;
+        }
+
+        .hero h1 {
+            font-family: 'Syne', sans-serif;
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--black);
+            line-height: 1.15;
+            margin-bottom: 8px;
+        }
+
+        .hero h1 span {
+            color: var(--red);
+        }
+
+        .hero p {
+            color: var(--gray-500);
+            font-size: 13.5px;
+            max-width: 640px;
+            line-height: 1.6;
+        }
+
+        .hero p code {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            background: var(--gray-100);
+            padding: 1px 5px;
+            border-radius: 3px;
+            color: var(--gray-700);
+        }
+
+        .section {
+            background: var(--white);
+            border: var(--border);
+            border-radius: 10px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 20px;
+            border-bottom: var(--border);
+            background: var(--gray-50);
+        }
+
+        .section-num {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--red);
+            color: var(--white);
+            font-size: 11px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .section-title {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--gray-700);
+        }
+
+        .section-body {
+            padding: 20px;
+        }
+
+        .drop-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        @media(max-width:680px) {
+            .drop-grid { grid-template-columns: 1fr; }
+        }
+
+        .drop-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .drop-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--gray-500);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .drop-label .badge {
+            font-size: 9px;
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+
+        .badge-bl { background: #dbeafe; color: #1d4ed8; }
+        .badge-prop { background: #fce7f3; color: #be185d; }
+        .badge-opt { background: var(--gray-100); color: var(--gray-400); }
+        .badge-epw { background: #dcfce7; color: #15803d; }
+
+        .dropzone {
+            border: 2px dashed var(--gray-200);
+            border-radius: var(--radius);
+            padding: 18px 14px;
+            cursor: pointer;
+            transition: border-color .15s, background .15s, transform .1s;
+            background: var(--gray-50);
+            text-align: center;
+            position: relative;
+        }
+
+        .dropzone:hover {
+            background: var(--gray-100);
+            border-color: var(--gray-300);
+            transform: translateY(-1px);
+        }
+
+        .dropzone.drag {
+            background: var(--red-muted);
+            border-color: var(--red);
+            border-style: solid;
+        }
+
+        .dropzone.has-files {
+            border-style: solid;
+            border-color: var(--gray-300);
+        }
+
+        .dropzone input[type=file] { display: none; }
+
+        .dropzone-icon { font-size: 22px; margin-bottom: 6px; opacity: .5; }
+        .dropzone-text { font-size: 12px; font-weight: 600; color: var(--gray-500); margin-bottom: 2px; }
+        .dropzone-hint { font-size: 11px; color: var(--gray-400); font-family: 'DM Mono', monospace; }
+
+        .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            min-height: 0;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border-radius: 4px;
+            padding: 3px 8px 3px 6px;
+            font-size: 11px;
+            font-family: 'DM Mono', monospace;
+            font-weight: 500;
+            border: 1px solid;
+            line-height: 1.4;
+        }
+
+        .chip-bl { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+        .chip-prop { background: #fdf2f8; border-color: #fbcfe8; color: #9d174d; }
+        .chip-epw { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+
+        .chip .x {
+            cursor: pointer;
+            opacity: .5;
+            font-size: 13px;
+            line-height: 1;
+            padding: 0 1px;
+        }
+
+        .chip .x:hover { opacity: 1; color: var(--red); }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 2fr 1fr;
+            gap: 14px;
+        }
+
+        @media(max-width:780px) { .config-grid { grid-template-columns: 1fr 1fr; } }
+        @media(max-width:480px) { .config-grid { grid-template-columns: 1fr; } }
+
+        .rate-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-top: 18px;
+            padding-top: 18px;
+            border-top: 1px dashed var(--gray-200);
+        }
+
+        @media(max-width:780px) { .rate-grid { grid-template-columns: 1fr 1fr; } }
+        @media(max-width:480px) { .rate-grid { grid-template-columns: 1fr; } }
+
+        .subsection-label {
+            grid-column: 1 / -1;
+            font-family: 'DM Mono', monospace;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--gray-400);
+            margin-bottom: -4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .subsection-label .line {
+            flex: 1;
+            height: 1px;
+            background: var(--gray-200);
+        }
+
+        .field-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--gray-500);
+            margin-bottom: 5px;
+        }
+
+        input[type=text],
+        input[type=number],
+        input[type=password],
+        select {
+            width: 100%;
+            padding: 8px 11px;
+            border: var(--border);
+            border-radius: var(--radius);
+            font-size: 13px;
+            background: var(--white);
+            color: var(--black);
+            font-family: 'Inter', sans-serif;
+            transition: border-color .15s, box-shadow .15s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--red);
+            box-shadow: 0 0 0 3px rgba(228, 0, 43, .1);
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-row input { flex: 1; }
+
+        .btn-lookup {
+            background: var(--black);
+            color: var(--white);
+            border: none;
+            padding: 0 14px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: 'DM Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background .15s;
+        }
+
+        .btn-lookup:hover:not(:disabled) { background: var(--red); }
+        .btn-lookup { cursor: pointer; }  /* always enabled */
+
+        .checkbox-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-top: 4px;
+            margin-top: 2px;
+        }
+
+        .checkbox-wrap input[type=checkbox] {
+            width: 14px;
+            height: 14px;
+            accent-color: var(--red);
+            cursor: pointer;
+        }
+
+        .checkbox-wrap label {
+            font-size: 12.5px;
+            color: var(--gray-700);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .field-hint {
+            font-size: 10.5px;
+            color: var(--gray-400);
+            margin-top: 4px;
+            font-family: 'DM Mono', monospace;
+        }
+
+        .actions-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 16px 20px;
+            border-top: var(--border);
+            background: var(--gray-50);
+            border-radius: 0 0 10px 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-primary {
+            background: var(--red);
+            color: var(--white);
+            border: none;
+            padding: 10px 24px;
+            font-size: 13px;
+            font-weight: 700;
+            font-family: 'Syne', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: background .15s, transform .1s, box-shadow .15s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--red-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(228, 0, 43, .3);
+        }
+
+        .btn-primary:active:not(:disabled) { transform: translateY(0); }
+
+        .btn-primary:disabled {
+            background: var(--gray-200);
+            color: var(--gray-400);
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .btn-ghost {
+            background: var(--white);
+            color: var(--gray-700);
+            border: var(--border);
+            padding: 10px 16px;
+            font-size: 12.5px;
+            font-weight: 500;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: border-color .15s, color .15s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .btn-ghost:hover { border-color: var(--gray-400); color: var(--black); }
+
+        .status-txt {
+            font-size: 12px;
+            color: var(--gray-400);
+            font-family: 'DM Mono', monospace;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--gray-200);
+            border-top-color: var(--red);
+            border-radius: 50%;
+            animation: spin .6s linear infinite;
+            display: none;
+        }
+
+        .spinner.visible { display: inline-block; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        pre.log {
+            background: #0e0e0e;
+            color: #c8c8c8;
+            padding: 16px;
+            border-radius: var(--radius);
+            font-family: 'DM Mono', monospace;
+            font-size: 11.5px;
+            max-height: 360px;
+            overflow: auto;
+            white-space: pre-wrap;
+            line-height: 1.7;
+            border: 1px solid #1a1a1a;
+        }
+
+        pre.log .ok { color: #4ade80; }
+        pre.log .err { color: #f87171; }
+        pre.log .warn { color: #fbbf24; }
+        pre.log .dim { color: #555; }
+        pre.log .info { color: #60a5fa; }
+        pre.log .hdr { color: #e4e4e4; font-weight: 500; }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--black);
+            color: var(--white);
+            padding: 10px 18px;
+            border-radius: var(--radius);
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity .2s, transform .2s;
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        .toast.show { opacity: 1; transform: translateY(0); }
+
+        footer {
+            text-align: center;
+            padding: 24px;
+            font-size: 11.5px;
+            color: var(--gray-400);
+            font-family: 'DM Mono', monospace;
+        }
+
+        footer span { color: var(--red); }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="brand">
+            <div class="brand-logo">Cannon<span class="red">Design</span></div>
+            <div class="brand-pipe"></div>
+            <div class="brand-tag">epAutomate · SIM Extractor v2</div>
+        </div>
+        <div class="header-right">
+            <div class="dot"></div>
+            runs locally · no upload
+        </div>
+    </header>
+
+    <main>
+        <div class="hero">
+            <h1>DOE-2.2 <span>&rarr;</span> Excel</h1>
+            <p>Drop in your <code>.SIM</code>, optional <code>.inp</code>, and optional <code>.epw</code> files,
+                configure rates, then click Generate. Outputs a formatted <code>.xlsx</code> with <b>BL Data</b> and
+                <b>Proposed Data</b> tabs &mdash; same schema, every column. Now reads <code>LV-D</code> /
+                <code>LV-E</code> / <code>BEPS</code> / <code>BEPU</code> / <code>SV-A</code> / <code>SS-A</code> for
+                accurate envelope, WWR, areas, and peaks.</p>
+        </div>
+
+        <!-- FILES -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-num">1</div>
+                <div class="section-title">Files</div>
+            </div>
+            <div class="section-body">
+                <div class="drop-grid">
+                    <div class="drop-group">
+                        <div class="drop-label"><span class="badge badge-bl">BL</span> Baseline .SIM file(s)</div>
+                        <label class="dropzone" data-target="blSim">
+                            <input type="file" multiple accept=".sim,.SIM" />
+                            <div class="dropzone-icon">&#128196;</div>
+                            <div class="dropzone-text">Drop files or click to browse</div>
+                            <div class="dropzone-hint">.sim / .SIM</div>
+                        </label>
+                        <div class="chips" id="chips-blSim"></div>
+                    </div>
+
+                    <div class="drop-group">
+                        <div class="drop-label"><span class="badge badge-bl">BL</span> Baseline .inp file(s) <span class="badge badge-opt">optional</span></div>
+                        <label class="dropzone" data-target="blInp">
+                            <input type="file" multiple accept=".inp,.INP" />
+                            <div class="dropzone-icon">&#128203;</div>
+                            <div class="dropzone-text">Drop files or click to browse</div>
+                            <div class="dropzone-hint">.inp / .INP</div>
+                        </label>
+                        <div class="chips" id="chips-blInp"></div>
+                    </div>
+
+                    <div class="drop-group">
+                        <div class="drop-label"><span class="badge badge-prop">Prop</span> Proposed .SIM file(s)</div>
+                        <label class="dropzone" data-target="propSim">
+                            <input type="file" multiple accept=".sim,.SIM" />
+                            <div class="dropzone-icon">&#128196;</div>
+                            <div class="dropzone-text">Drop files or click to browse</div>
+                            <div class="dropzone-hint">.sim / .SIM</div>
+                        </label>
+                        <div class="chips" id="chips-propSim"></div>
+                    </div>
+
+                    <div class="drop-group">
+                        <div class="drop-label"><span class="badge badge-prop">Prop</span> Proposed .inp file(s) <span class="badge badge-opt">optional</span></div>
+                        <label class="dropzone" data-target="propInp">
+                            <input type="file" multiple accept=".inp,.INP" />
+                            <div class="dropzone-icon">&#128203;</div>
+                            <div class="dropzone-text">Drop files or click to browse</div>
+                            <div class="dropzone-hint">.inp / .INP</div>
+                        </label>
+                        <div class="chips" id="chips-propInp"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CONFIGURATION -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-num">2</div>
+                <div class="section-title">Configuration</div>
+            </div>
+            <div class="section-body">
+                <div class="config-grid">
+                    <div>
+                        <label class="field-label" for="optionLabel">Option Label</label>
+                        <input type="text" id="optionLabel" placeholder="e.g. LEED Baseline" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="climateZone">Climate Zone</label>
+                        <select id="climateZone">
+                            <option value="">&mdash; select &mdash;</option>
+                            <option>1A</option><option>2A</option><option>2B</option>
+                            <option>3A</option><option>3B</option><option>3C</option>
+                            <option>4A</option><option>4B</option><option>4C</option>
+                            <option>5A</option><option>5B</option><option>5C</option>
+                            <option>6A</option><option>6B</option><option>7</option><option>8</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="field-label" for="outputName">Output Filename</label>
+                        <input type="text" id="outputName" value="energy_results.xlsx" />
+                    </div>
+                    <div>
+                        <label class="field-label">Pairing</label>
+                        <div class="checkbox-wrap" style="margin-top:6px">
+                            <input type="checkbox" id="autoPair" checked />
+                            <label for="autoPair">Auto-pair .inp by index</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RATES & CARBON -->
+                <div class="rate-grid">
+                    <div class="subsection-label">
+                        Utility Rates &amp; Carbon
+                        <span class="line"></span>
+                        <span style="text-transform:none;letter-spacing:0">INP UTILITY-RATE &rsaquo; manual &rsaquo; 0</span>
+                    </div>
+                    <div>
+                        <label class="field-label" for="elecRate">Electricity ($/kWh)</label>
+                        <input type="number" id="elecRate" step="0.0001" placeholder="blank = 0" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="gasRate">Gas ($/therm)</label>
+                        <input type="number" id="gasRate" step="0.0001" placeholder="blank = 0" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="elecCarbon">Grid carbon (kg CO&#8322;e/kWh)</label>
+                        <input type="number" id="elecCarbon" step="0.0001" placeholder="blank = 0" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="gasCarbon">Gas carbon (kg CO&#8322;e/therm)</label>
+                        <input type="number" id="gasCarbon" step="0.0001" placeholder="blank = 0" />
+                    </div>
+
+                    <div style="grid-column:1 / -1" class="subsection-label">
+                        NREL URDB auto-lookup
+                        <span class="line"></span>
+                        <span style="text-transform:none;letter-spacing:0">optional &middot; needs .epw for lat/long</span>
+                    </div>
+                    <div>
+                        <label class="field-label" for="manualLat">Latitude</label>
+                        <input type="number" id="manualLat" step="0.001" placeholder="e.g. 39.281" />
+                        <div class="field-hint">from EPW or Google Maps</div>
+                    </div>
+                    <div>
+                        <label class="field-label" for="manualLon">Longitude</label>
+                        <input type="number" id="manualLon" step="0.001" placeholder="e.g. -76.611" />
+                    </div>
+                    <div>
+                        <label class="field-label" for="nrelKey">NREL / OpenEI API key</label>
+                        <input type="text" id="nrelKey" value="dYog29kfBgadw04fZZ9SfIZs76naSgMYubOwR9C6" autocomplete="off" spellcheck="false" />
+                        <div class="field-hint">developer.nrel.gov/signup</div>
+                    </div>
+                    <div style="display:flex; align-items:flex-end;">
+                        <button class="btn-lookup" id="lookupBtn" style="height:36px; width:100%">&#128269; Look up rate</button>
+                    </div>
+                </div>
+            </div>
+            <div class="actions-bar">
+                <button class="btn-primary" id="runBtn" disabled>&#11015; Generate Excel</button>
+                <button class="btn-ghost" id="clearBtn">Clear all</button>
+                <div class="status-txt">
+                    <div class="spinner" id="spinner"></div>
+                    <span id="status"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOG -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-num">3</div>
+                <div class="section-title">Output Log</div>
+            </div>
+            <div class="section-body" style="padding:12px">
+                <pre class="log" id="log"><span class="dim">Ready. Drop a .SIM file to begin.</span></pre>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <span>&#9829;</span> built for energy modelers &middot; epAutomate v2 runs locally, your files never leave this browser
+    </footer>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+"use strict";
+/* engine_sim */
+
+
+/* ============================================================
+ *  epAutomate v2 — DOE-2.2 SIM → Excel engine
+ *  Corrected report readers:
+ *    BEPS/BEPU  → energy end-uses (exact kBtu + kWh) + EUI + areas
+ *    LV-D       → envelope summary: per-orientation window/wall areas,
+ *                 WWR, weighted U-values, roof, all-walls, building
+ *    LV-E       → underground / slab-on-grade U-values
+ *    LV-B       → space inventory: conditioned area, people, LPD, EPD
+ *    SV-A       → supply/return fan kW, supply CFM, OA CFM
+ *    SS-A       → per-system peak heating/cooling (summed → bldg peak)
+ *    PS-B       → peak electric kW + peak hour
+ *    PS-A       → plant rollups (cross-check)
+ *  INP        → glass, chiller/boiler COP, utility rates, shading
+ *  EPW        → climate-zone validation, design temps, lat/long
+ * ============================================================ */
+
+const MONTH_NAMES = { 1: "JAN", 2: "FEB", 3: "MAR", 4: "APR", 5: "MAY", 6: "JUN", 7: "JUL", 8: "AUG", 9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC" };
+const KWH_TO_KBTU = 3.412, THERM_TO_KBTU = 100, MBTU_TO_KBTU = 1000;
+
+function floats(line) {
+    const m = line.match(/[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?/g);
+    return m ? m.map(parseFloat) : [];
+}
+
+/* ============================================================
+ *  SIM PARSER
+ * ============================================================ */
+class SIMParser {
+    constructor(text, name) {
+        this.text = text;
+        this.name = name;
+        this.lines = text.split(/\r?\n/);
+        this.r = {};
+    }
+
+    parse() {
+        this._header();
+        this._psb();          // utility/fuel + peak electric
+        this._beps_bepu();    // authoritative end-use (kBtu + kwh) + EUI/areas
+        this._pse_fallback();  // fallback only if BEPS missing
+        this._ssr();          // unmet hours (throttling-range)
+        this._ssa_peaks();    // peak heating/cooling = sum of system maxima
+        this._lvb();          // space inventory: cond area, people, LPD/EPD
+        this._lvd();          // envelope summary (THE fix)
+        this._lve();          // underground/slab
+        this._sva();          // fans, CFM, COP cross-check
+        this._derived();
+        return this.r;
+    }
+
+    /* --- header: project name, timestamp, weather --- */
+    _header() {
+        const r = this.r;
+        const line1 = this.lines[0] || "";
+        r.project_name = line1.slice(0, 65).trim();
+        const tm = line1.match(/(\d+\/\d+\/\d{4})\s+(\d+:\d+:\d+)/);
+        r.timestamp = tm ? `${tm[1]} ${tm[2]}` : "";
+        r.weather_file = "";
+        for (let i = 0; i < Math.min(40, this.lines.length); i++) {
+            const wm = this.lines[i].match(/WEATHER FILE-\s+(.+?)(?:\s{2,}|$)/);
+            if (wm) { r.weather_file = wm[1].trim(); break; }
+        }
+    }
+
+    /* --- PS-B: annual kWh/therm + peak electric kW + peak hour --- */
+    _psb() {
+        const r = this.r;
+        Object.assign(r, { kwh_annual: 0, max_kw: 0, peak_elec_mon_day: "", therm_annual: 0, max_therm_hr: 0 });
+        let in_psb = false, in_em1 = false, in_fm1 = false, after_max = false;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- PS-B")) { in_psb = true; in_em1 = in_fm1 = after_max = false; continue; }
+            if (!in_psb) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("PS-B")) { in_psb = false; continue; }
+            const s = line.trim();
+            if (s.startsWith("EM1")) { in_em1 = true; in_fm1 = false; after_max = false; continue; }
+            if (s.startsWith("FM1")) { in_fm1 = true; in_em1 = false; continue; }
+            if (in_em1) {
+                if (s.startsWith("KWH")) { const n = floats(s.replace("KWH", "")); if (n.length) r.kwh_annual = n[n.length - 1]; }
+                else if (s.startsWith("MAX KW")) { const n = floats(s.replace("MAX KW", "")); if (n.length) r.max_kw = n[n.length - 1]; after_max = true; }
+                else if (after_max && s.startsWith("DAY/HR")) { const t = s.split(/\s+/); if (t.length) r.peak_elec_mon_day = t[t.length - 1]; after_max = false; in_em1 = false; }
+            }
+            if (in_fm1) {
+                if (s.startsWith("THERM")) { const n = floats(s.replace("THERM", "")); if (n.length) r.therm_annual = n[n.length - 1]; }
+                else if (s.startsWith("MAX THERM/HR")) { const n = floats(s.replace("MAX THERM/HR", "")); if (n.length) r.max_therm_hr = n[n.length - 1]; in_fm1 = false; }
+            }
+        }
+    }
+
+    /* --- BEPS + BEPU: the authoritative end-use tables ---
+       BEPS reports MBTU per category; BEPU reports KWH/THERM.
+       Column order (12 end-uses + total):
+       LIGHTS TASK-LIGHTS MISC-EQUIP SPACE-HEAT SPACE-COOL HEAT-REJECT
+       PUMPS&AUX VENT-FANS REFRIG HT-PUMP-SUPP DOMEST-HW EXT-USAGE TOTAL
+       Also captures EUI line ("KBTU/SQFT-YR ... NET-AREA") + total electricity kWh. */
+    _beps_bepu() {
+        const r = this.r;
+        r._has_beps = false;
+        // BEPS (MBTU)
+        let in_beps = false, grabbed_elec = false;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- BEPS")) { in_beps = true; grabbed_elec = false; continue; }
+            if (!in_beps) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("BEPS")) { in_beps = false; continue; }
+            const s = line.trim();
+            // First MBTU line after "EM1 ELECTRICITY" is the electricity row
+            if (s.startsWith("MBTU") && !grabbed_elec) {
+                const n = floats(s.replace("MBTU", ""));
+                if (n.length >= 13) {
+                    r.beps_lights_mbtu = n[0];
+                    r.beps_task_mbtu = n[1];
+                    r.beps_misc_mbtu = n[2];
+                    r.beps_heat_mbtu = n[3];
+                    r.beps_cool_mbtu = n[4];
+                    r.beps_reject_mbtu = n[5];
+                    r.beps_pumps_mbtu = n[6];
+                    r.beps_fans_mbtu = n[7];
+                    r.beps_refrig_mbtu = n[8];
+                    r.beps_htpump_mbtu = n[9];
+                    r.beps_dhw_mbtu = n[10];
+                    r.beps_ext_mbtu = n[11];
+                    r.beps_total_mbtu = n[12];
+                    r._has_beps = true;
+                    grabbed_elec = true;
+                }
+            }
+            // EUI line
+            const eu = s.match(/TOTAL SITE ENERGY\s+([\d.]+)\s+MBTU\s+([\d.]+)\s+KBTU\/SQFT-YR GROSS-AREA\s+([\d.]+)\s+KBTU\/SQFT-YR NET-AREA/);
+            if (eu) { r.beps_site_mbtu = parseFloat(eu[1]); r.beps_eui_gross = parseFloat(eu[2]); r.beps_eui_net = parseFloat(eu[3]); }
+        }
+        // BEPU (KWH / THERM)
+        let in_bepu = false, grabbed_kwh = false, grabbed_therm = false;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- BEPU")) { in_bepu = true; grabbed_kwh = grabbed_therm = false; continue; }
+            if (!in_bepu) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("BEPU")) { in_bepu = false; continue; }
+            const s = line.trim();
+            if (s.startsWith("KWH") && !grabbed_kwh) {
+                const n = floats(s.replace("KWH", ""));
+                if (n.length >= 13) {
+                    r.bepu_lights_kwh = n[0]; r.bepu_task_kwh = n[1]; r.bepu_misc_kwh = n[2];
+                    r.bepu_heat_kwh = n[3]; r.bepu_cool_kwh = n[4]; r.bepu_reject_kwh = n[5];
+                    r.bepu_pumps_kwh = n[6]; r.bepu_fans_kwh = n[7]; r.bepu_refrig_kwh = n[8];
+                    r.bepu_htpump_kwh = n[9]; r.bepu_dhw_kwh = n[10]; r.bepu_ext_kwh = n[11];
+                    r.bepu_total_kwh = n[12];
+                    grabbed_kwh = true;
+                }
+            }
+            if (s.startsWith("THERM") && !grabbed_therm) {
+                const n = floats(s.replace("THERM", ""));
+                if (n.length >= 13) {
+                    r.bepu_heat_therm = n[3]; r.bepu_dhw_therm = n[10]; r.bepu_total_therm = n[12];
+                    grabbed_therm = true;
+                }
+            }
+        }
+    }
+
+    /* --- PS-E fallback (only used if BEPS not present) --- */
+    _pse_fallback() {
+        const r = this.r;
+        if (r._has_beps) return;
+        Object.assign(r, {
+            ps_e_lights_kwh: 0, ps_e_misc_kwh: 0, ps_e_htg_kwh: 0, ps_e_clg_kwh: 0,
+            ps_e_heat_reject_kwh: 0, ps_e_pumps_kwh: 0, ps_e_fans_kwh: 0, ps_e_dhw_kwh: 0,
+            ps_e_ext_kwh: 0, ps_e_total_kwh: 0, ps_e_htg_mbtu: 0, ps_e_dhw_mbtu: 0, ps_e_total_mbtu: 0
+        });
+        let in_e = false, in_f = false, sep_e = false, sep_f = false;
+        for (const line of this.lines) {
+            const cont = line.includes("CONTINUED");
+            if (line.includes("REPORT- PS-E Energy End-Use Summary for all Electric")) { if (!cont) sep_e = false; in_e = true; in_f = false; continue; }
+            if (line.includes("REPORT- PS-E Energy End-Use Summary for all Fuel")) { if (!cont) sep_f = false; in_f = true; in_e = false; continue; }
+            if (/^REPORT-\s/.test(line) && !line.includes("PS-E")) { in_e = in_f = false; continue; }
+            const s = line.trim();
+            if (in_e) {
+                if (s.includes("=======")) { sep_e = true; continue; }
+                if (sep_e && s.startsWith("KWH")) {
+                    const n = floats(s.replace("KWH", ""));
+                    if (n.length >= 13) { r.ps_e_lights_kwh = n[0]; r.ps_e_misc_kwh = n[2]; r.ps_e_htg_kwh = n[3]; r.ps_e_clg_kwh = n[4]; r.ps_e_heat_reject_kwh = n[5]; r.ps_e_pumps_kwh = n[6]; r.ps_e_fans_kwh = n[7]; r.ps_e_dhw_kwh = n[10]; r.ps_e_ext_kwh = n[11]; r.ps_e_total_kwh = n[12]; }
+                    in_e = false;
+                }
+            }
+            if (in_f) {
+                if (s.includes("=======")) { sep_f = true; continue; }
+                if (sep_f && s.startsWith("MBTU")) { const n = floats(s.replace("MBTU", "")); if (n.length >= 13) { r.ps_e_htg_mbtu = n[3]; r.ps_e_dhw_mbtu = n[10]; r.ps_e_total_mbtu = n[12]; } in_f = false; }
+            }
+        }
+    }
+
+    /* --- unmet hours from BEPS throttling-range note --- */
+    _ssr() {
+        const r = this.r;
+        r.unmet_heating_hrs = 0; r.unmet_cooling_hrs = 0;
+        for (const line of this.lines) {
+            let m = line.match(/HOURS ANY ZONE ABOVE COOLING THROTTLING RANGE\s+=\s+(\d+)/);
+            if (m) r.unmet_cooling_hrs = parseInt(m[1], 10);
+            m = line.match(/HOURS ANY ZONE BELOW HEATING THROTTLING RANGE\s+=\s+(\d+)/);
+            if (m) r.unmet_heating_hrs = parseInt(m[1], 10);
+        }
+    }
+
+    /* --- SS-A: peak heating/cooling = SUM of per-system maxima ---
+       Each SS-A "System Loads Summary" ends with a MAX line carrying
+       the system's max cooling LOAD (+) and max heating LOAD (-).
+       Building peak ≈ sum of these (per user decision: option a). */
+    _ssa_peaks() {
+        const r = this.r;
+        r.peak_cooling_kbtuh = 0; r.peak_heating_kbtuh = 0;
+        r.peak_cooling_time = ""; r.peak_heating_time = "";
+        let in_block = false, header_seen = false;
+        let bestCoolMon = "", bestCoolDy = 0, bestCoolHr = 0, bestCoolVal = 0;
+        let bestHeatMon = "", bestHeatDy = 0, bestHeatHr = 0, bestHeatVal = 0;
+        let curCoolMax = 0, curHeatMax = 0;
+        let curCoolMon = "", curCoolDy = 0, curCoolHr = 0;
+        let curHeatMon = "", curHeatDy = 0, curHeatHr = 0;
+
+        const flush = () => {
+            r.peak_cooling_kbtuh += curCoolMax;
+            r.peak_heating_kbtuh += Math.abs(curHeatMax);
+            if (curCoolMax > bestCoolVal) { bestCoolVal = curCoolMax; bestCoolMon = curCoolMon; bestCoolDy = curCoolDy; bestCoolHr = curCoolHr; }
+            if (Math.abs(curHeatMax) > bestHeatVal) { bestHeatVal = Math.abs(curHeatMax); bestHeatMon = curHeatMon; bestHeatDy = curHeatDy; bestHeatHr = curHeatHr; }
+            curCoolMax = curHeatMax = 0;
+        };
+
+        for (const line of this.lines) {
+            if (line.includes("REPORT- SS-A System Loads Summary")) {
+                if (in_block) flush();
+                in_block = true; header_seen = false;
+                curCoolMax = curHeatMax = 0;
+                continue;
+            }
+            if (!in_block) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("SS-A System Loads")) { flush(); in_block = false; continue; }
+            const s = line.trim();
+            // Monthly rows: "JAN  <coolE> <dy> <hr> <db> <wb> <coolLoad> <heatE> <dy> <hr> <db> <wb> <heatLoad> <kwh> <kw>"
+            const mm = s.match(/^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(.+)$/);
+            if (mm) {
+                const n = floats(mm[2]);
+                // need at least 12 numeric (cool E, dy, hr, db, wb, coolLoad, heat E, dy, hr, db, wb, heatLoad)
+                if (n.length >= 12) {
+                    const coolLoad = n[5], coolDy = Math.trunc(n[1]), coolHr = Math.trunc(n[2]);
+                    const heatLoad = n[11], heatDy = Math.trunc(n[7]), heatHr = Math.trunc(n[8]);
+                    if (coolLoad > curCoolMax) { curCoolMax = coolLoad; curCoolMon = mm[1]; curCoolDy = coolDy; curCoolHr = coolHr; }
+                    if (heatLoad < curHeatMax) { curHeatMax = heatLoad; curHeatMon = mm[1]; curHeatDy = heatDy; curHeatHr = heatHr; }
+                }
+                continue;
+            }
+        }
+        if (in_block) flush();
+        if (bestCoolMon) r.peak_cooling_time = `${bestCoolMon} ${String(bestCoolDy).padStart(2, "0")} ${String(bestCoolHr).padStart(2, "0")}:00`;
+        if (bestHeatMon) r.peak_heating_time = `${bestHeatMon} ${String(bestHeatDy).padStart(2, "0")} ${String(bestHeatHr).padStart(2, "0")}:00`;
+
+        // peak electric kW from PS-B
+        r.peak_elec_kw = r.max_kw || 0;
+        // peak elec hour from PS-B mon/day
+        if (r.peak_elec_mon_day && r.peak_elec_mon_day.includes("/")) {
+            const [mn, d] = r.peak_elec_mon_day.split("/").map(x => parseInt(x, 10));
+            const monName = MONTH_NAMES[mn] || "";
+            r.peak_elec_time = monName ? `${monName} ${String(d).padStart(2, "0")} 13:00` : "";
+        } else r.peak_elec_time = "";
+    }
+
+    /* --- LV-B: space inventory (conditioned area, people, LPD/EPD sums) ---
+       Building totals line + per-space rows for conditioned-area aggregation. */
+    _lvb() {
+        const r = this.r;
+        Object.assign(r, { total_area: 0, total_volume: 0, total_people: 0, conditioned_area: 0, conditioned_people: 0, lpd_sum: 0, epd_sum: 0, spaces: [] });
+        for (const line of this.lines) {
+            if (line.startsWith("BUILDING TOTALS")) {
+                const n = floats(line.replace("BUILDING TOTALS", ""));
+                if (n.length >= 3) { r.total_people = n[0]; r.total_area = n[1]; r.total_volume = n[2]; }
+                else if (n.length === 2) { r.total_area = n[0]; r.total_volume = n[1]; }
+                break;
+            }
+        }
+        // Per-space rows: name  mult  EXT/INT  azim  lights  people  equip  METHOD  ach  area  volume
+        const sp_re = /^(.{1,50}?)\s{2,}([\d.]+)\s+(EXT|INT)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+\S+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/;
+        for (const line of this.lines) {
+            const m = line.match(sp_re);
+            if (m) {
+                const name = m[1].trim();
+                const mult = parseFloat(m[2]), lights = parseFloat(m[5]), people = parseFloat(m[6]), equip = parseFloat(m[7]);
+                const area = parseFloat(m[9]) * mult;
+                const volume = parseFloat(m[10]) * mult;
+                // Conditioned = has lighting load AND not an explicitly-named Unconditioned/plenum space.
+                const isUncond = /unconditioned|plnm|plenum|spcplen|\bplen\b/i.test(name);
+                const cond = lights > 0 && !isUncond;
+                r.spaces.push({ name, mult, type: m[3], lights, people, equip, area, volume, conditioned: cond });
+                if (cond) {
+                    r.conditioned_area += area;
+                    r.conditioned_people += people * mult;
+                    r.lpd_sum += lights * area;
+                    r.epd_sum += equip * area;
+                }
+            }
+        }
+        if (!r.total_area && r.spaces.length) r.total_area = r.spaces.reduce((a, s) => a + s.area, 0);
+    }
+
+    /* --- LV-D: Details of Exterior Surfaces — THE envelope fix ---
+       The report ends with a summary block:
+         <ORIENT>   AVG-U-WIN  AVG-U-WALL  AVG-U-W+W  WIN-AREA  WALL-AREA  W+W-AREA
+       for NORTH NORTH-EAST EAST SOUTH-EAST SOUTH SOUTH-WEST WEST NORTH-WEST
+       then ROOF, ALL WALLS, WALLS+ROOFS, UNDERGRND, BUILDING. */
+    _lvd() {
+        const r = this.r;
+        const orient = {};
+        const ORIENT_KEYS = ["NORTH-EAST", "NORTH-WEST", "SOUTH-EAST", "SOUTH-WEST", "NORTH", "EAST", "SOUTH", "WEST", "ROOF", "ALL WALLS", "WALLS+ROOFS", "UNDERGRND", "BUILDING"];
+        let in_lvd = false;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- LV-D")) { in_lvd = true; continue; }
+            if (!in_lvd) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("LV-D")) { in_lvd = false; continue; }
+            const s = line.trim();
+            // Match a summary line: longest-key-first so NORTH-EAST beats NORTH
+            for (const key of ORIENT_KEYS) {
+                if (s.startsWith(key + " ") || s === key) {
+                    const rest = s.slice(key.length);
+                    const n = floats(rest);
+                    // expect: uWin uWall uWW winArea wallArea wwArea  (6 numbers)
+                    if (n.length >= 6) {
+                        orient[key] = { uWin: n[0], uWall: n[1], uWW: n[2], winArea: n[3], wallArea: n[4], wwArea: n[5] };
+                    }
+                    break;
+                }
+            }
+        }
+        r._lvd = orient;
+        const facadeMap = { NORTH: "north", "NORTH-EAST": "ne", EAST: "east", "SOUTH-EAST": "se", SOUTH: "south", "SOUTH-WEST": "sw", WEST: "west", "NORTH-WEST": "nw" };
+
+        // Per-orientation window+wall areas (the 8 cardinals are the +window+wall area)
+        for (const [k, short] of Object.entries(facadeMap)) {
+            if (orient[k]) {
+                r[`${short}_wall_wwarea`] = orient[k].wwArea;   // wall+window (= above-ground wall area for that face)
+                r[`${short}_win_area`] = orient[k].winArea;
+                r[`${short}_wall_area_net`] = orient[k].wallArea;
+            }
+        }
+
+        // Cardinal roll-ups for the 4 reported wall directions (combine diagonals)
+        const sum = (...keys) => keys.reduce((a, k) => a + (orient[k] ? orient[k].wwArea : 0), 0);
+        const sumWin = (...keys) => keys.reduce((a, k) => a + (orient[k] ? orient[k].winArea : 0), 0);
+        // North face group, East, South, West (split diagonals half/half is ambiguous;
+        // report the pure cardinal wall+window areas as the "Above Ground X Wall Area")
+        r.above_ground_north_wall = orient["NORTH"] ? orient["NORTH"].wwArea : 0;
+        r.above_ground_east_wall = orient["EAST"] ? orient["EAST"].wwArea : 0;
+        r.above_ground_south_wall = orient["SOUTH"] ? orient["SOUTH"].wwArea : 0;
+        r.above_ground_west_wall = orient["WEST"] ? orient["WEST"].wwArea : 0;
+
+        // ALL WALLS totals
+        if (orient["ALL WALLS"]) {
+            r.total_window_area = orient["ALL WALLS"].winArea;
+            r.total_wall_net_area = orient["ALL WALLS"].wallArea;
+            r.gross_wall_area = orient["ALL WALLS"].wwArea;          // 92,288.58
+            r.above_ground_wall_area = orient["ALL WALLS"].wwArea;
+            r.wall_u_value = orient["ALL WALLS"].uWall;              // 0.062
+            r.glass_u_value = orient["ALL WALLS"].uWin;              // 0.435
+            r.vert_weighted_u = orient["ALL WALLS"].uWW;            // 0.169
+            r.building_wwr = r.gross_wall_area > 0 ? (r.total_window_area / r.gross_wall_area * 100) : 0;
+        }
+        // ROOF
+        if (orient["ROOF"]) {
+            r.gross_roof_area = orient["ROOF"].wwArea;               // 274,038.78
+            r.roof_u_value = orient["ROOF"].uWall;                  // 0.047
+            r.skylight_area = orient["ROOF"].winArea;
+            r.skylight_ratio = r.gross_roof_area > 0 ? (orient["ROOF"].winArea / r.gross_roof_area * 100) : 0;
+        }
+        // UNDERGRND (slab) — prefer LV-E weighting, but capture here too
+        if (orient["UNDERGRND"]) {
+            r.lvd_slab_u = orient["UNDERGRND"].uWall;
+            r.underground_area = orient["UNDERGRND"].wwArea;
+        }
+        // WWR by orientation (window / wall+window per face)
+        for (const [k, short] of Object.entries(facadeMap)) {
+            if (orient[k] && orient[k].wwArea > 0) {
+                r[`${short}_wwr_actual`] = orient[k].winArea / orient[k].wwArea * 100;
+            }
+        }
+    }
+
+    /* --- LV-E: Details of Underground Surfaces → slab U-value (area-weighted) --- */
+    _lve() {
+        const r = this.r;
+        let in_lve = false, area_w = 0, area_sum = 0;
+        // Row: NAME  MULT  AREA  CONSTRUCTION  U-VALUE
+        const re = /^\s+(\S.+?)\s+([\d.]+)\s+([\d.]+)\s+(\S.+?)\s+([\d.]+)\s*$/;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- LV-E")) { in_lve = true; continue; }
+            if (!in_lve) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("LV-E")) { in_lve = false; continue; }
+            const m = line.match(re);
+            if (m) {
+                const mult = parseFloat(m[2]), area = parseFloat(m[3]) * mult, u = parseFloat(m[5]);
+                if (area > 0) { area_w += u * area; area_sum += area; }
+            }
+        }
+        // Prefer LV-D UNDERGRND area-weighted U (matches DOE-2 summary); LV-E recompute is fallback.
+        r.slab_u_value = (r.lvd_slab_u != null && r.lvd_slab_u > 0) ? r.lvd_slab_u : (area_sum > 0 ? area_w / area_sum : 0);
+        if (area_sum > 0) r.underground_area = area_sum;
+    }
+
+    /* --- SV-A: supply/return fan kW, supply CFM, OA CFM ---
+       Per system:
+         "VAVS  ...  FLOOR-AREA  PEOPLE  OA-RATIO  COOL-CAP  SHR  HEAT-CAP  COOL-EIR  HEAT-EIR  SUPP"
+         "SUPPLY  <cfm>  <divFactor>  <kW>  <dT> ..."
+         "RETURN  <cfm>  <divFactor>  <kW>  <dT> ...  <mechEff> ..."
+       Zone rows: "<zone>  <supplyCFM>  <exhaustCFM>  <fanKW>  <minFrac>  <oaCFM>  ..." */
+    _sva() {
+        const r = this.r;
+        Object.assign(r, {
+            total_supply_cfm: 0, total_oa_cfm: 0,
+            supply_fan_kw: 0, return_fan_kw: 0,
+            cooling_eir_list: [], heating_eir_list: []
+        });
+        let in_sva = false;
+        for (const line of this.lines) {
+            if (line.includes("REPORT- SV-A")) { in_sva = true; continue; }
+            if (!in_sva) continue;
+            if (/^REPORT-\s/.test(line) && !line.includes("SV-A")) { in_sva = false; continue; }
+            const s = line.trim();
+            // System design row carries cooling/heating EIR (cols 8,9 0-indexed of numeric)
+            const sysm = s.match(/^(VAVS?|PVAVS?|PSZ|SZRH|PTAC|PTHP|FPFC?|HVSYS|RESYS2?|DDS|MZS|PMZS|PIU|CBVAV|SUM|UHT|FC)\s+(.+)$/);
+            if (sysm && !s.startsWith("SUPPLY") && !s.startsWith("RETURN")) {
+                const n = floats(sysm[2]);
+                // n: [altFactor, floorArea, people, oaRatio, coolCap, shr, heatCap, coolEIR, heatEIR, supp]
+                if (n.length >= 9) {
+                    const ce = n[7], he = n[8];
+                    if (ce > 0) r.cooling_eir_list.push(1 / ce);
+                    if (he > 0) r.heating_eir_list.push(1 / he);
+                }
+                continue;
+            }
+            // Supply fan
+            let m = s.match(/^SUPPLY\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (m) { r.total_supply_cfm += parseFloat(m[1]); r.supply_fan_kw += parseFloat(m[3]); continue; }
+            // Return fan
+            m = s.match(/^RETURN\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (m) { r.return_fan_kw += parseFloat(m[3]); continue; }
+            // Zone rows for OA flow — 6th numeric is OUTSIDE AIR FLOW (CFM)
+            const zm = line.match(/^\s{2,}(\S.+?)\s+([\d.]+)\.\s+([\d.]+)\.\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\./);
+            if (zm) r.total_oa_cfm += parseFloat(zm[6]);
+        }
+        r.dx_cooling_cop = r.cooling_eir_list.length ? r.cooling_eir_list.reduce((a, b) => a + b, 0) / r.cooling_eir_list.length : 0;
+        r.dx_heating_cop = r.heating_eir_list.length ? r.heating_eir_list.reduce((a, b) => a + b, 0) / r.heating_eir_list.length : 0;
+        // Total fan power: supply + return (installed/design). Logged as best estimate.
+        r.total_fan_kw = r.supply_fan_kw + r.return_fan_kw;
+        r.total_fan_kw_supply_only = r.supply_fan_kw;
+    }
+
+    /* --- derived metrics --- */
+    _derived() {
+        const r = this.r;
+
+        // Energy — prefer BEPS/BEPU (MBTU→kBtu = ×1000)
+        if (r._has_beps) {
+            r.int_lighting_kbtu = (r.beps_lights_mbtu || 0) * MBTU_TO_KBTU;
+            r.int_equip_kbtu = (r.beps_misc_mbtu || 0) * MBTU_TO_KBTU;
+            r.htg_elec_kbtu = (r.beps_heat_mbtu || 0) * MBTU_TO_KBTU;
+            r.clg_elec_kbtu = (r.beps_cool_mbtu || 0) * MBTU_TO_KBTU;
+            r.heat_reject_kbtu = (r.beps_reject_mbtu || 0) * MBTU_TO_KBTU;
+            r.pumps_kbtu = (r.beps_pumps_mbtu || 0) * MBTU_TO_KBTU;
+            r.fans_kbtu = (r.beps_fans_mbtu || 0) * MBTU_TO_KBTU;
+            r.water_sys_elec_kbtu = (r.beps_dhw_mbtu || 0) * MBTU_TO_KBTU;
+            r.ext_lighting_kbtu = (r.beps_ext_mbtu || 0) * MBTU_TO_KBTU;
+            r.refrig_kbtu = (r.beps_refrig_mbtu || 0) * MBTU_TO_KBTU;
+            // electricity total (all-electric: total = electricity)
+            r.electricity_kbtu = (r.kwh_annual || r.bepu_total_kwh || 0) * KWH_TO_KBTU;
+            r.gas_kbtu = (r.therm_annual || r.bepu_total_therm || 0) * THERM_TO_KBTU;
+            r.htg_gas_kbtu = (r.bepu_heat_therm || 0) * THERM_TO_KBTU;
+            r.water_sys_gas_kbtu = (r.bepu_dhw_therm || 0) * THERM_TO_KBTU;
+            // total energy from BEPS site MBTU when available
+            r.total_energy_kbtu = r.beps_total_mbtu ? r.beps_total_mbtu * MBTU_TO_KBTU : (r.electricity_kbtu + r.gas_kbtu);
+        } else {
+            r.electricity_kbtu = (r.kwh_annual || 0) * KWH_TO_KBTU;
+            r.gas_kbtu = (r.therm_annual || 0) * THERM_TO_KBTU;
+            r.int_lighting_kbtu = (r.ps_e_lights_kwh || 0) * KWH_TO_KBTU;
+            r.int_equip_kbtu = (r.ps_e_misc_kwh || 0) * KWH_TO_KBTU;
+            r.htg_elec_kbtu = (r.ps_e_htg_kwh || 0) * KWH_TO_KBTU;
+            r.clg_elec_kbtu = (r.ps_e_clg_kwh || 0) * KWH_TO_KBTU;
+            r.heat_reject_kbtu = (r.ps_e_heat_reject_kwh || 0) * KWH_TO_KBTU;
+            r.pumps_kbtu = (r.ps_e_pumps_kwh || 0) * KWH_TO_KBTU;
+            r.fans_kbtu = (r.ps_e_fans_kwh || 0) * KWH_TO_KBTU;
+            r.water_sys_elec_kbtu = (r.ps_e_dhw_kwh || 0) * KWH_TO_KBTU;
+            r.ext_lighting_kbtu = (r.ps_e_ext_kwh || 0) * KWH_TO_KBTU;
+            r.htg_gas_kbtu = (r.ps_e_htg_mbtu || 0) * MBTU_TO_KBTU;
+            r.water_sys_gas_kbtu = (r.ps_e_dhw_mbtu || 0) * MBTU_TO_KBTU;
+            r.refrig_kbtu = 0;
+            r.total_energy_kbtu = r.electricity_kbtu + r.gas_kbtu;
+        }
+
+        // Areas — conditioned for intensity, total for geometry
+        const total_area = r.total_area || 0;
+        let cond = r.conditioned_area || 0;
+        if (cond === 0) cond = total_area;
+        r.conditioned_floor_area = cond;
+        r.total_floor_area = total_area;
+
+        // EUI: prefer BEPS net-area EUI (matches DOE-2 exactly), else compute on conditioned
+        const denom = cond > 0 ? cond : (total_area > 0 ? total_area : 1);
+        r.eui_kbtu_ft2 = r.beps_eui_net ? r.beps_eui_net : (r.total_energy_kbtu / denom);
+
+        // Peak intensities on conditioned area (matches original tool)
+        r.peak_elec_w = (r.peak_elec_kw || r.max_kw || 0) * 1000;
+        r.peak_elec_w_per_ft2 = r.peak_elec_w / denom;
+        r.peak_cooling_btuh_ft2 = (r.peak_cooling_kbtuh || 0) * 1000 / denom;
+        r.peak_heating_btuh_ft2 = (r.peak_heating_kbtuh || 0) * 1000 / denom;
+
+        // LPD / EPD — conditioned vs total (use conditioned-area sums on conditioned denom)
+        r.lpd_w_ft2 = cond > 0 ? (r.lpd_sum || 0) / cond : 0;
+        r.epd_w_ft2 = cond > 0 ? (r.epd_sum || 0) / cond : 0;
+        // "total" LPD/EPD reported on conditioned in original (both ≈ same since unconditioned has 0 LPD)
+        r.lpd_total_w_ft2 = r.lpd_w_ft2;
+        r.epd_total_w_ft2 = r.epd_w_ft2;
+
+        // Occupant density — original reports on conditioned area for both
+        r.occ_density_ft2_person = r.conditioned_people > 0 ? cond / r.conditioned_people : 0;
+        r.cond_occ_density_ft2_person = r.conditioned_people > 0 ? cond / r.conditioned_people : 0;
+
+        // Wall R
+        r.wall_r_value = r.wall_u_value > 0 ? 1 / r.wall_u_value : 0;
+        r.vert_weighted_r = r.vert_weighted_u > 0 ? 1 / r.vert_weighted_u : 0;
+
+        // Glass SHGC/VLT/LSG — from INP if available (set later), else from LV-D win U
+        if (r.glass_shgc === undefined) r.glass_shgc = 0;
+        if (r.glass_vlt === undefined) r.glass_vlt = 0;
+        if (r.glass_lsg === undefined) r.glass_lsg = r.glass_shgc > 0 ? r.glass_vlt / r.glass_shgc : 0;
+
+        // Ventilation / airflow — supply CFM total (= cooling airflow in CAV/VAV reporting)
+        r.vent_cfm_per_ft2 = denom > 0 ? r.total_supply_cfm / denom : 0;
+        r.total_clg_cfm = r.total_supply_cfm;
+        r.clg_cfm_per_ft2 = r.vent_cfm_per_ft2;
+        r.total_htg_cfm = r.total_supply_cfm;     // same supply network heats & cools
+        r.htg_cfm_per_ft2 = r.vent_cfm_per_ft2;
+
+        // Envelope ratios
+        r.wall_to_floor_ratio = denom > 0 ? (r.gross_wall_area || 0) / denom : 0;
+        r.roof_to_floor_ratio = denom > 0 ? (r.gross_roof_area || 0) / denom : 0;
+        r.envelope_to_floor_ratio = r.wall_to_floor_ratio + r.roof_to_floor_ratio;
+
+        // Pump power placeholder (PS-C peak sum filled in run pipeline if needed)
+        r.dhw_efficiency = (r.therm_annual > 0 || r.bepu_dhw_therm > 0) ? 0.82 : 1.0; // electric DHW ≈ 1.0
+        r.ext_lighting_kw = 0;
+    }
+}
+
+/* ============================================================
+ *  EXPORTS for Node test harness
+ * ============================================================ */
+/* engine_rest */
+
+
+/* ============================================================
+ *  INP PARSER  — glass, chiller/boiler COP, utility rates, shading
+ * ============================================================ */
+const HDR_RE = /^\s*"([^"]+)"\s*=\s*([A-Z][A-Z0-9\-]+)\s*$/;
+const BARE_HDR_RE = /^\s*([A-Z][A-Z0-9\-]+)\s*$/;
+const PROP_RE = /^\s*([A-Z][A-Z0-9\-]+)\s*=\s*(.+?)\s*$/;
+
+function cleanValue(v) {
+    v = v.trim();
+    if (v.startsWith('"') && v.endsWith('"')) return v.slice(1, -1);
+    if (v.startsWith("(") && v.endsWith(")")) {
+        const inner = v.slice(1, -1).trim();
+        return inner.split(",").map(x => { x = x.trim().replace(/^"|"$/g, ""); const n = parseFloat(x); return !isNaN(n) && /^-?\d+\.?\d*$/.test(x) ? n : x; });
+    }
+    const n = parseFloat(v);
+    if (!isNaN(n) && /^-?\d+\.?\d*([eE][-+]?\d+)?$/.test(v)) return n;
+    return v;
+}
+
+class INPParser {
+    constructor(text, name) { this.text = text; this.name = name; this.blocks = []; this.byType = {}; this.byName = {}; }
+    parse() {
+        if (!this.text) return {};
+        this._parseBlocks();
+        return {
+            ...this._extractProject(), ...this._extractSite(), ...this._extractRates(),
+            ...this._extractGlass(), ...this._extractEquip(), ...this._extractShading()
+        };
+    }
+    _parseBlocks() {
+        let name = null, otype = null, props = {}, inBlock = false;
+        const commit = () => {
+            if (otype !== null) {
+                this.blocks.push([name, otype, props]);
+                if (!this.byType[otype]) this.byType[otype] = [];
+                this.byType[otype].push([name, props]);
+                if (name) this.byName[name] = [otype, props];
+            }
+            name = null; otype = null; props = {}; inBlock = false;
+        };
+        for (let raw of this.text.split(/\r?\n/)) {
+            let line = raw.replace(/\s+$/, ""); const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("$")) continue;
+            if (trimmed === "..") { commit(); continue; }
+            if (line.replace(/\s+$/, "").endsWith("..")) line = line.slice(0, line.lastIndexOf("..")).replace(/\s+$/, "");
+            let m = line.match(HDR_RE);
+            if (m) { if (inBlock) commit(); name = m[1]; otype = m[2]; props = {}; inBlock = true; continue; }
+            m = line.match(BARE_HDR_RE);
+            if (m && !inBlock) { otype = m[1]; name = null; props = {}; inBlock = true; continue; }
+            m = line.match(PROP_RE);
+            if (m && inBlock) props[m[1]] = cleanValue(m[2]);
+        }
+        commit();
+    }
+    _extractProject() {
+        const out = { inp_title: "", inp_run_period: "" };
+        for (const [, props] of (this.byType.TITLE || [])) { if (props["LINE-1"]) { out.inp_title = String(props["LINE-1"]).replace(/\*/g, ""); break; } }
+        for (const [, props] of (this.byType["RUN-PERIOD-PD"] || [])) { const bm = props["BEGIN-MONTH"], bd = props["BEGIN-DAY"], by = props["BEGIN-YEAR"], em = props["END-MONTH"], ed = props["END-DAY"], ey = props["END-YEAR"]; if (bm && em) out.inp_run_period = `${bm}/${bd}/${by} - ${em}/${ed}/${ey}`; break; }
+        return out;
+    }
+    _extractSite() {
+        const out = {};
+        for (const [, props] of (this.byType["SITE-PARAMETERS"] || [])) { if (props.ALTITUDE !== undefined) out.inp_altitude_ft = props.ALTITUDE; if (props.LATITUDE !== undefined) out.inp_latitude = props.LATITUDE; if (props.LONGITUDE !== undefined) out.inp_longitude = props.LONGITUDE; break; }
+        for (const [, props] of (this.byType["BUILD-PARAMETERS"] || [])) { if (props.AZIMUTH !== undefined) out.inp_building_azimuth = props.AZIMUTH; break; }
+        return out;
+    }
+    _extractRates() {
+        const out = { inp_elec_rate_per_kwh: null, inp_elec_rate_per_kbtu: null, inp_gas_rate_per_therm: null, inp_gas_rate_per_kbtu: null, inp_utility_rates: [] };
+        for (const [name, props] of (this.byType["UTILITY-RATE"] || [])) {
+            const fuel = String(props.TYPE || "").toUpperCase();
+            let refs = props["BLOCK-CHARGES"] || []; if (typeof refs === "string") refs = [refs];
+            let tier1 = 0;
+            for (const ref of refs) { if (this.byName[ref]) { const bprops = this.byName[ref][1]; let costs = bprops["COSTS-1"]; if (Array.isArray(costs) && costs.length) tier1 += parseFloat(costs[0]) || 0; else if (typeof costs === "number") tier1 += costs; } }
+            out.inp_utility_rates.push({ name, fuel, tier1_cost: tier1 });
+            if (fuel.includes("ELEC")) { out.inp_elec_rate_per_kwh = tier1; out.inp_elec_rate_per_kbtu = tier1 ? tier1 / 3.412 : null; }
+            else if (fuel.includes("GAS") || fuel === "NATURAL-GAS") { out.inp_gas_rate_per_therm = tier1; out.inp_gas_rate_per_kbtu = tier1 ? tier1 / 100 : null; }
+        }
+        return out;
+    }
+    _extractGlass() {
+        // SHADING-COEF → SHGC = SC × 0.87 ; VLT from VIS-TRANS if present
+        const out = { inp_glass_shgc: null, inp_glass_vlt: null, inp_glass_u: null, inp_glass_type_names: [] };
+        const shgcs = [], vlts = [], us = [];
+        for (const [name, props] of (this.byType["GLASS-TYPE"] || [])) {
+            out.inp_glass_type_names.push(name);
+            const sc = props["SHADING-COEF"];
+            const cond = props["GLASS-CONDUCT"];
+            const vt = props["VIS-TRANS"] !== undefined ? props["VIS-TRANS"] : (props["VLT"] !== undefined ? props["VLT"] : null);
+            if (typeof sc === "number") shgcs.push(sc * 0.87);
+            if (typeof cond === "number") us.push(cond);
+            if (typeof vt === "number") vlts.push(vt);
+        }
+        if (shgcs.length) out.inp_glass_shgc = shgcs.reduce((a, b) => a + b, 0) / shgcs.length;
+        if (us.length) out.inp_glass_u = us.reduce((a, b) => a + b, 0) / us.length;
+        if (vlts.length) out.inp_glass_vlt = vlts.reduce((a, b) => a + b, 0) / vlts.length;
+        return out;
+    }
+    _extractEquip() {
+        // Chiller COP = 1/ELEC-INPUT-RATIO ; Boiler COP from type (electric resistance ≈ 1.0)
+        const out = { inp_chiller_cop: 0, inp_boiler_cop: 0 };
+        const cops = [];
+        for (const [, props] of (this.byType["CHILLER"] || [])) {
+            const eir = props["ELEC-INPUT-RATIO"];
+            if (typeof eir === "number" && eir > 0) cops.push(1 / eir);
+        }
+        if (cops.length) out.inp_chiller_cop = cops.reduce((a, b) => a + b, 0) / cops.length;
+        let boilerCops = [];
+        for (const [, props] of (this.byType["BOILER"] || [])) {
+            const type = String(props["TYPE"] || "").toUpperCase();
+            const hir = props["HEAT-INPUT-RATIO"];
+            if (type.includes("ELEC")) boilerCops.push(0.98);
+            else if (typeof hir === "number" && hir > 0) boilerCops.push(1 / hir);
+        }
+        if (boilerCops.length) out.inp_boiler_cop = boilerCops.reduce((a, b) => a + b, 0) / boilerCops.length;
+        return out;
+    }
+
+    _extractShading() {
+        // Detect window overhangs/fins per facade. Building has none → all "None"/0.
+        let bldgAz = 0;
+        for (const [, props] of (this.byType["BUILD-PARAMETERS"] || [])) { bldgAz = parseFloat(props.AZIMUTH || 0) || 0; break; }
+        const azToFacade = (az) => { az = ((az % 360) + 360) % 360; if (az < 45 || az >= 315) return "north"; if (az < 135) return "east"; if (az < 225) return "south"; return "west"; };
+        let curType = null, curProps = {}, curWallAz = null;
+        const facades = { north: { w: 0, s: 0, o: 0, f: 0 }, east: { w: 0, s: 0, o: 0, f: 0 }, south: { w: 0, s: 0, o: 0, f: 0 }, west: { w: 0, s: 0, o: 0, f: 0 } };
+        for (const raw of this.text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line || line.startsWith("$")) continue;
+            if (line === "..") {
+                if (curType === "EXTERIOR-WALL") curWallAz = (parseFloat(curProps.AZIMUTH || 0) || 0) + bldgAz;
+                else if (curType === "WINDOW" && curWallAz !== null) {
+                    const fc = facades[azToFacade(curWallAz)]; fc.w++;
+                    const keys = Object.keys(curProps);
+                    const hasOH = keys.some(k => k.startsWith("OVERHANG-"));
+                    const hasFin = keys.some(k => ["FIN-A", "FIN-B", "FIN-C", "FIN-D"].includes(k));
+                    if (hasOH) fc.o++; if (hasFin) fc.f++; if (hasOH || hasFin) fc.s++;
+                }
+                curType = null; curProps = {}; continue;
+            }
+            let m = line.match(HDR_RE);
+            if (m) { curType = m[2]; curProps = {}; continue; }
+            m = line.match(PROP_RE);
+            if (m && curType) curProps[m[1]] = cleanValue(m[2]);
+        }
+        const out = {};
+        for (const f of ["north", "east", "south", "west"]) {
+            const b = facades[f], pct = b.w ? (b.s / b.w * 100) : 0;
+            out[`inp_${f}_shading_type`] = (b.o && b.f) ? "Overhang+Fin" : b.o ? "Overhang" : b.f ? "Fin" : "None";
+            out[`inp_${f}_shading_ratio`] = Math.round(pct * 10) / 10;
+        }
+        return out;
+    }
+}
+
+/* ============================================================
+ *  EPW PARSER — climate-zone validation, design temps, lat/long
+ *  (validator only; adds no CSV columns)
+ * ============================================================ */
+/* EPWParser removed */
+
+/* ============================================================
+ *  NREL URDB rate lookup (browser fetch)
+ *  Returns simplified flat $/kWh (tier-1 energy rate).
+ * ============================================================ */
+async function nrelUrdbLookup(apiKey, lat, lon) {
+    // Find utility rates near lat/long, commercial sector
+    const directUrl = `https://api.openei.org/utility_rates?version=8&format=json&detail=full&api_key=${encodeURIComponent(apiKey)}&lat=${lat}&lon=${lon}&sector=Commercial&limit=5`;
+    // file:// origin blocks direct fetch due to CORS — use allorigins proxy as fallback
+    const isFileOrigin = location.protocol === 'file:';
+    let resp, data;
+    if (isFileOrigin) {
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
+        const proxyResp = await fetch(proxyUrl);
+        if (!proxyResp.ok) throw new Error(`Proxy HTTP ${proxyResp.status}. Save the HTML to a web server to use direct NREL lookup.`);
+        const wrapper = await proxyResp.json();
+        data = JSON.parse(wrapper.contents);
+    } else {
+        resp = await fetch(directUrl);
+        if (!resp.ok) throw new Error(`URDB HTTP ${resp.status}`);
+        data = await resp.json();
+    }
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    if (!data.items || !data.items.length) throw new Error("no rates found for location");
+    // Take the first rate with an energyratestructure; extract tier-1 $/kWh
+    for (const item of data.items) {
+        const ers = item.energyratestructure;
+        if (Array.isArray(ers) && ers.length && Array.isArray(ers[0]) && ers[0].length) {
+            const rate = parseFloat(ers[0][0].rate);
+            if (!isNaN(rate) && rate > 0) {
+                return { rate, name: item.name || item.utility || "URDB rate", utility: item.utility || "" };
+            }
+        }
+    }
+    throw new Error("rates found but no usable energy rate structure");
+}
+
+/* ============================================================
+ *  COLUMN DEFINITIONS — exact headers (typos/spacing preserved)
+ * ============================================================ */
+const C_BLUE = "4472C4", C_GREEN = "70AD47", C_ORANGE = "ED7D31", C_PURPLE = "7030A0",
+    C_GRAY = "808080", C_TEAL = "00B0F0", C_LIME = "92D050", C_RED = "FF0000";
+
+const COLUMNS = [
+    ["Option", "option_name", "@", C_BLUE],
+    ["Results Path", "results_path", "@", C_BLUE],
+    ["Timestamp", "timestamp", "@", C_BLUE],
+    ["Climate File", "weather_file", "@", C_BLUE],
+    ["Climate Zone", "climate_zone", "@", C_BLUE],
+    ["Heating Unmet Hours", "unmet_heating_hrs", "#,##0", C_TEAL],
+    ["Cooling Unmet Hours", "unmet_cooling_hrs", "#,##0", C_TEAL],
+    ["Total Energy Use (kBtu)", "total_energy_kbtu", "#,##0", C_GREEN],
+    ["Energy Use Intensity (kBtu/ft\u00b2)", "eui_kbtu_ft2", "#,##0.0", C_GREEN],
+    ["Electricity (kBtu)", "electricity_kbtu", "#,##0", C_GREEN],
+    ["Gas (kBtu)", "gas_kbtu", "#,##0", C_GREEN],
+    ["Additional Fuel (kBtu)", "additional_fuel_kbtu", "#,##0", C_GREEN],
+    ["District Cooling (kBtu)", "district_cooling_kbtu", "#,##0", C_GREEN],
+    ["District Heating (kBtu)", "district_heating_kbtu", "#,##0", C_GREEN],
+    ["Heating - Electricity Energy Use (kBtu)", "htg_elec_kbtu", "#,##0", C_ORANGE],
+    ["Heating - Gas Energy Use (kBtu)", "htg_gas_kbtu", "#,##0", C_ORANGE],
+    ["Heating - Additonal Fuel Energy Use (kBtu)", "htg_add_fuel_kbtu", "#,##0", C_ORANGE],
+    ["Heating - District Heating Energy Use (kBtu)", "htg_dist_htg_kbtu", "#,##0", C_ORANGE],
+    ["Cooling - Electricity Energy Use (kBtu)", "clg_elec_kbtu", "#,##0", C_ORANGE],
+    ["Cooling - District Energy Use (kBtu)", "clg_dist_kbtu", "#,##0", C_ORANGE],
+    ["Interior Lighting - Electricity Energy Use (kBtu)", "int_lighting_kbtu", "#,##0", C_ORANGE],
+    ["Exterior Lighting - Electricity Energy Use (kBtu)", "ext_lighting_kbtu", "#,##0", C_ORANGE],
+    ["Interior Equipment - Electricity Energy Use (kBtu)", "int_equip_kbtu", "#,##0", C_ORANGE],
+    ["Interior Equipment - Gas Energy Use (kBtu)", "int_equip_gas_kbtu", "#,##0", C_ORANGE],
+    ["Interior Equipment - Additional Fuel Energy Use (kBtu)", "int_equip_add_kbtu", "#,##0", C_ORANGE],
+    ["Exterior Equipment - Energy Use (kBtu)", "ext_equip_kbtu", "#,##0", C_ORANGE],
+    ["Fans - Electricity Energy Use (kBtu)", "fans_kbtu", "#,##0", C_ORANGE],
+    ["Pumps - Electricity Energy Use (kBtu)", "pumps_kbtu", "#,##0", C_ORANGE],
+    ["Heat Rejection - Electricity Energy Use (kBtu)", "heat_reject_kbtu", "#,##0", C_ORANGE],
+    ["Humidification - Electricity Energy Use (kBtu)", "humid_elec_kbtu", "#,##0", C_ORANGE],
+    ["Heat Recovery - Electricity Energy Use (kBtu)", "heat_recov_kbtu", "#,##0", C_ORANGE],
+    ["Water Systems - Electricity Energy Use (kBtu)", "water_sys_elec_kbtu", "#,##0", C_ORANGE],
+    ["Water Systems - Gas Energy Use (kBtu)", "water_sys_gas_kbtu", "#,##0", C_ORANGE],
+    ["Water Systems - Additional Fuel Energy Use (kBtu)", "water_sys_add_kbtu", "#,##0", C_ORANGE],
+    ["Water Systems - District Heating Energy Use (kBtu)", "water_sys_dist_kbtu", "#,##0", C_ORANGE],
+    ["Refrigeration - Electricity Energy Use (kBtu)", "refrig_kbtu", "#,##0", C_ORANGE],
+    ["Generators  Electricity Energy Use (kBtu)", "gen_kbtu", "#,##0", C_ORANGE],
+    ["Misc 1 -  Electricity Energy Use (kBtu)", "misc1_kbtu", "#,##0", C_ORANGE],
+    ["Misc 2 -  Electricity Energy Use (kBtu)", "misc2_kbtu", "#,##0", C_ORANGE],
+    ["Total Water Use (kGal)", "total_water_kgal", "#,##0.0", C_PURPLE],
+    ["Water Use Intensity (kGal/ft\u00b2)", "water_use_intensity", "0.000", C_PURPLE],
+    ["Heat Rejection - Water Use (kGal)", "hr_water_kgal", "#,##0.0", C_PURPLE],
+    ["Humidificatopn - Water Use (kGal)", "humid_water_kgal", "#,##0.0", C_PURPLE],
+    ["Water System - Water Use (kGal)", "ws_water_kgal", "#,##0.0", C_PURPLE],
+    ["Total Energy Cost ($)", "total_cost", '"$"#,##0.00', C_GRAY],
+    ["Energy Cost Intensity ($/ft\u00b2)", "cost_intensity", '"$"#,##0.00', C_GRAY],
+    ["Electricity Virtual Rate ($/kBtu)", "elec_rate_per_kbtu", "0.0000", C_GRAY],
+    ["Gas Virtual Rate ($/kBtu)", "gas_rate_per_kbtu", "0.0000", C_GRAY],
+    ["Additional Fuel Virtual Rate ($/kBtu)", "add_fuel_rate_per_kbtu", "0.0000", C_GRAY],
+    ["District Cooling Virtual Rate ($/kBtu)", "dc_rate_per_kbtu", "0.0000", C_GRAY],
+    ["District Heating Virtual Rate ($/kBtu)", "dh_rate_per_kbtu", "0.0000", C_GRAY],
+    ["Total Carbon Emissions (kg CO2e)", "total_carbon_kg", "#,##0", C_GRAY],
+    ["Carbon Emission Intensity (kg CO2e/ft\u00b2)", "carbon_intensity", "0.000", C_GRAY],
+    ["Electricity Virtual Rate (kg CO2e/kBtu)", "elec_carbon_rate", "0.0000", C_GRAY],
+    ["Gas Virtual Rate (kg CO2e/kBtu)", "gas_carbon_rate", "0.0000", C_GRAY],
+    ["Additional Fuel Virtual Rate (kg CO2e/kBtu)", "add_fuel_carbon_rate", "0.0000", C_GRAY],
+    ["District Cooling Virtual Rate (kg CO2e/kBtu)", "dc_carbon_rate", "0.0000", C_GRAY],
+    ["District Heating Virtual Rate (kg CO2e/kBtu)", "dh_carbon_rate", "0.0000", C_GRAY],
+    ["Peak Heating (kBtuh)", "peak_heating_kbtuh", "#,##0.0", C_TEAL],
+    ["Peak Heating (Btuh/ft\u00b2)", "peak_heating_btuh_ft2", "#,##0.0", C_TEAL],
+    ["Peak Heating Hour", "peak_heating_time", "@", C_TEAL],
+    ["Peak Cooling (kBtuh)", "peak_cooling_kbtuh", "#,##0.0", C_TEAL],
+    ["Peak Cooling (Btuh/ft\u00b2)", "peak_cooling_btuh_ft2", "#,##0.0", C_TEAL],
+    ["Peak Cooling Hour", "peak_cooling_time", "@", C_TEAL],
+    ["Peak Electrical Load (W)", "peak_elec_w", "#,##0", C_TEAL],
+    ["Peak Electrical Load Intensity (W/ft\u00b2)", "peak_elec_w_per_ft2", "#,##0.0", C_TEAL],
+    ["Peak Electricity Hour", "peak_elec_time", "@", C_TEAL],
+    ["Conditioned Floor Area (ft\u00b2)", "conditioned_floor_area", "#,##0", C_LIME],
+    ["Total Floor Area (ft\u00b2)", "total_floor_area", "#,##0", C_LIME],
+    ["Gross Wall Area (ft\u00b2)", "gross_wall_area", "#,##0", C_LIME],
+    ["Above Ground Gross Wall Area (ft\u00b2)", "above_ground_wall_area", "#,##0", C_LIME],
+    ["Above Ground North Wall Area (ft\u00b2)", "above_ground_north_wall", "#,##0", C_LIME],
+    ["Above Ground East Wall Area (ft\u00b2)", "above_ground_east_wall", "#,##0", C_LIME],
+    ["Above Ground South Wall Area (ft\u00b2)", "above_ground_south_wall", "#,##0", C_LIME],
+    ["Above Ground East Wall Area (ft\u00b2)", "above_ground_west_wall", "#,##0", C_LIME],
+    ["North WWR Nominal (%)", "north_wwr_nominal", "0.0", C_LIME],
+    ["East WWR Nominal (%)", "east_wwr_nominal", "0.0", C_LIME],
+    ["South WWR Nominal (%)", "south_wwr_nominal", "0.0", C_LIME],
+    ["West WWR Nominal (%)", "west_wwr_nominal", "0.0", C_LIME],
+    ["Building WWR Actual (%)", "building_wwr", "0.0", C_LIME],
+    ["North WWR Actual (%)", "north_wwr_actual", "0.0", C_LIME],
+    ["East WWR Actual (%)", "east_wwr_actual", "0.0", C_LIME],
+    ["South WWR Actual (%)", "south_wwr_actual", "0.0", C_LIME],
+    ["West WWR Actual (%)", "west_wwr_actual", "0.0", C_LIME],
+    ["Gross Roof Area (ft\u00b2)", "gross_roof_area", "#,##0", C_LIME],
+    ["Skylight Roof Ratio (%)", "skylight_ratio", "0.0", C_LIME],
+    ["Exterior Wall to Floor Area Ratio", "wall_to_floor_ratio", "0.000", C_LIME],
+    ["Exterior Roof to Floor Area Ratio", "roof_to_floor_ratio", "0.000", C_LIME],
+    ["Exterior Envelope to Floor Area Ratio", "envelope_to_floor_ratio", "0.000", C_LIME],
+    ["North Shading Type", "north_shading_type", "@", C_LIME],
+    ["North Shading Ratio (%)", "north_shading_ratio", "0.0", C_LIME],
+    ["West Shading Type", "west_shading_type", "@", C_LIME],
+    ["West Shading Ratio (%)", "west_shading_ratio", "0.0", C_LIME],
+    ["South Shading Type", "south_shading_type", "@", C_LIME],
+    ["South Shading Ratio (%)", "south_shading_ratio", "0.0", C_LIME],
+    ["East Shading Type", "east_shading_type", "@", C_LIME],
+    ["East Shading Ratio (%)", "east_shading_ratio", "0.0", C_LIME],
+    ["Vertical Weighted U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "vert_weighted_u", "0.000", C_RED],
+    ["Vertical Weighted R-Value (ft\u00b2\u00b7h\u00b7F/Btu )", "vert_weighted_r", "0.00", C_RED],
+    ["Wall U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "wall_u_value", "0.000", C_RED],
+    ["Wall 2 U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "wall2_u_value", "0.000", C_RED],
+    ["Roof U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "roof_u_value", "0.000", C_RED],
+    ["Exposed Floor U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "exposed_floor_u_value", "0.000", C_RED],
+    ["Slab on Grade U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "slab_u_value", "0.000", C_RED],
+    ["Assembly U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "assembly_u_value", "0.000", C_RED],
+    ["Glass U-Value (Btu/h\u00b7ft\u00b2\u00b7F)", "glass_u_value", "0.000", C_RED],
+    ["Glass SHGC", "glass_shgc", "0.000", C_RED],
+    ["Glass VLT", "glass_vlt", "0.000", C_RED],
+    ["Glass LSG", "glass_lsg", "0.00", C_RED],
+    ["Infiltration Rate (CFM/ft\u00b2 facade)", "infil_cfm_ft2", "0.000", C_RED],
+    ["Lighting Power Density (W/ft\u00b2)", "lpd_total_w_ft2", "0.00", C_LIME],
+    ["Conditioned Lighting Power Density (W/ft\u00b2)", "lpd_w_ft2", "0.00", C_LIME],
+    ["Occupant Density (ft\u00b2/person)", "occ_density_ft2_person", "#,##0.0", C_LIME],
+    ["Conditioned Occupant Density (ft\u00b2/person)", "cond_occ_density_ft2_person", "#,##0.0", C_LIME],
+    ["Equipment Power Density (W/ft\u00b2)", "epd_total_w_ft2", "0.00", C_LIME],
+    ["Conditioned Equipment Power Density (W/ft\u00b2)", "epd_w_ft2", "0.00", C_LIME],
+    ["Total Ventilation Air Flow Rate (CFM)", "total_supply_cfm", "#,##0", C_RED],
+    ["Ventilation Air Flow Rate per Area (CFM/ft\u00b2)", "vent_cfm_per_ft2", "0.000", C_RED],
+    ["Total Heating Airflow Rate (CFM)", "total_htg_cfm", "#,##0", C_RED],
+    ["Heating Airflow Rate per Area (CFM/ft\u00b2)", "htg_cfm_per_ft2", "0.000", C_RED],
+    ["Total Cooling Airflow Rate (CFM)", "total_clg_cfm", "#,##0", C_RED],
+    ["Cooling Airflow Rate per Area (CFM/ft\u00b2)", "clg_cfm_per_ft2", "0.000", C_RED],
+    ["Chiller Efficiency (COP)", "chiller_cop", "0.00", C_RED],
+    ["Boiler Efficiency (COP)", "boiler_cop", "0.00", C_RED],
+    ["DX Cooling Efficiency (COP)", "dx_cooling_cop", "0.00", C_RED],
+    ["DX Heating Efficiency (HSPF)", "dx_heating_cop", "0.00", C_RED],
+    ["Heat Pump Cooling Efficiency (COP)", "hp_cooling_cop", "0.00", C_RED],
+    ["Heat Pump Heating Efficiency (COP)", "hp_heating_cop", "0.00", C_RED],
+    ["Total Fan Power (kW)", "total_fan_kw", "0.00", C_RED],
+    ["Total Pump Power (kW)", "total_pump_kw", "0.00", C_RED],
+    ["Service Hot Water Thermal Efficiency (COP)", "dhw_efficiency", "0.00", C_RED],
+    ["Exterior Lighting (kW)", "ext_lighting_kw", "0.00", C_RED],
+];
+
+/* ============================================================
+ *  ROW ENRICHMENT — fold INP/EPW/rate inputs into the SIM row
+ * ============================================================ */
+function enrichRow(data, rates) {
+    const elec_kbtu = data.electricity_kbtu || 0, gas_kbtu = data.gas_kbtu || 0;
+    const cond_area = data.conditioned_floor_area || data.total_floor_area || 1;
+
+    // Rate priority: INP UTILITY-RATE → manual → 0
+    const elec_rate = (data.inp_elec_rate_per_kbtu != null ? data.inp_elec_rate_per_kbtu : (rates.elec_per_kbtu || 0));
+    const gas_rate = (data.inp_gas_rate_per_kbtu != null ? data.inp_gas_rate_per_kbtu : (rates.gas_per_kbtu || 0));
+    const elec_carbon = rates.elec_carbon_per_kbtu || 0;
+    const gas_carbon = rates.gas_carbon_per_kbtu || 0;
+
+    const total_cost = elec_kbtu * elec_rate + gas_kbtu * gas_rate;
+    const cost_intensity = cond_area > 0 ? total_cost / cond_area : 0;
+    const total_carbon = elec_kbtu * elec_carbon + gas_kbtu * gas_carbon;
+    const carbon_intensity = cond_area > 0 ? total_carbon / cond_area : 0;
+
+    // Glass: prefer INP-derived SHGC, SIM LV-D for U-value (frame-incl 0.435), VLT default 0.9
+    const glass_shgc = (data.inp_glass_shgc != null ? data.inp_glass_shgc : (data.glass_shgc || 0));
+    const glass_u = (data.glass_u_value || data.inp_glass_u || 0);
+    let glass_vlt = (data.inp_glass_vlt != null ? data.inp_glass_vlt : (data.glass_vlt || 0));
+    if (!glass_vlt && glass_u > 0) glass_vlt = rates.default_vlt != null ? rates.default_vlt : 0.9; // standard clear-glass VLT
+    const glass_lsg = glass_shgc > 0 ? glass_vlt / glass_shgc : 0;
+
+    // COP: prefer INP, else SIM SV-A
+    const chiller_cop = data.inp_chiller_cop || 0;
+    const boiler_cop = data.inp_boiler_cop || 0;
+
+    const extra = {
+        total_cost, cost_intensity,
+        elec_rate_per_kbtu: elec_rate, gas_rate_per_kbtu: gas_rate,
+        add_fuel_rate_per_kbtu: 0, dc_rate_per_kbtu: 0, dh_rate_per_kbtu: 0,
+        total_carbon_kg: total_carbon, carbon_intensity,
+        elec_carbon_rate: elec_carbon, gas_carbon_rate: gas_carbon,
+        add_fuel_carbon_rate: 0, dc_carbon_rate: 0, dh_carbon_rate: 0,
+        // zero placeholders for unused fuel/water/misc
+        additional_fuel_kbtu: 0, district_cooling_kbtu: 0, district_heating_kbtu: 0,
+        htg_add_fuel_kbtu: 0, htg_dist_htg_kbtu: 0, clg_dist_kbtu: 0,
+        int_equip_gas_kbtu: 0, int_equip_add_kbtu: 0, ext_equip_kbtu: 0,
+        humid_elec_kbtu: 0, heat_recov_kbtu: 0, water_sys_add_kbtu: 0, water_sys_dist_kbtu: 0,
+        gen_kbtu: 0, misc1_kbtu: 0, misc2_kbtu: 0,
+        total_water_kgal: 0, water_use_intensity: 0, hr_water_kgal: 0, humid_water_kgal: 0, ws_water_kgal: 0,
+        // nominal WWR (design intent) = actual unless overridden
+        north_wwr_nominal: round1(data.north_wwr_actual || 0), east_wwr_nominal: round1(data.east_wwr_actual || 0),
+        south_wwr_nominal: round1(data.south_wwr_actual || 0), west_wwr_nominal: round1(data.west_wwr_actual || 0),
+        // glass
+        glass_shgc, glass_vlt, glass_u_value: glass_u, glass_lsg,
+        // equipment
+        chiller_cop, boiler_cop,
+        hp_cooling_cop: 0, hp_heating_cop: 0,
+        // shading: from INP overhang/fin detection, else None/0
+        north_shading_type: data.inp_north_shading_type || "None", north_shading_ratio: round1(data.inp_north_shading_ratio || 0),
+        west_shading_type: data.inp_west_shading_type || "None", west_shading_ratio: round1(data.inp_west_shading_ratio || 0),
+        south_shading_type: data.inp_south_shading_type || "None", south_shading_ratio: round1(data.inp_south_shading_ratio || 0),
+        east_shading_type: data.inp_east_shading_type || "None", east_shading_ratio: round1(data.inp_east_shading_ratio || 0),
+        // envelope extras not separately reported
+        wall2_u_value: 0, exposed_floor_u_value: 0, assembly_u_value: data.vert_weighted_u || 0,
+        infil_cfm_ft2: 0,
+        // pump power: best-effort (SIM lacks clean installed-kW rollup)
+        total_pump_kw: data.total_pump_kw || 0,
+    };
+    // SIM data wins for everything it actually computed; extra fills gaps
+    const merged = { ...extra, ...data };
+    // But these computed-from-inputs must override SIM defaults:
+    for (const k of ["total_cost", "cost_intensity", "elec_rate_per_kbtu", "gas_rate_per_kbtu",
+        "total_carbon_kg", "carbon_intensity", "elec_carbon_rate", "gas_carbon_rate",
+        "glass_shgc", "glass_vlt", "glass_u_value", "glass_lsg", "chiller_cop", "boiler_cop",
+        "assembly_u_value", "north_wwr_nominal", "east_wwr_nominal", "south_wwr_nominal", "west_wwr_nominal"]) {
+        merged[k] = extra[k];
+    }
+    return merged;
+}
+
+function round1(x) { return Math.round((x || 0) * 10) / 10; }
+
+/* ============================================================
+ *  WORKBOOK BUILDER
+ * ============================================================ */
+function buildWorkbook(blRows, propRows, rates) {
+    const wb = XLSX.utils.book_new();
+    for (const [name, rows] of [["BL Data", blRows], ["Proposed Data", propRows]]) {
+        XLSX.utils.book_append_sheet(wb, buildSheet(rows, rates), name);
+    }
+    return wb;
+}
+
+function buildSheet(rows, rates) {
+    const aoa = [];
+    aoa.push(COLUMNS.map(c => c[0]));
+    for (const row of rows) {
+        const merged = enrichRow(row, rates);
+        aoa.push(COLUMNS.map(([, key, fmt]) => {
+            let v = merged[key];
+            if (v === undefined || v === null) v = fmt === "@" ? "" : 0;
+            return v;
+        }));
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const hStyle = (color) => ({
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 9, name: "Calibri" },
+        fill: { patternType: "solid", fgColor: { rgb: color } },
+        alignment: { wrapText: true, vertical: "center", horizontal: "center" },
+        border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+    });
+    const dStyle = (fmt) => ({
+        alignment: { horizontal: fmt === "@" ? "left" : "right", vertical: "center" },
+        border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } },
+    });
+    const colWidths = [];
+    for (let c = 0; c < COLUMNS.length; c++) {
+        const [hdr, , fmt, color] = COLUMNS[c];
+        const addr = XLSX.utils.encode_cell({ r: 0, c });
+        if (ws[addr]) ws[addr].s = hStyle(color);
+        let maxLen = hdr.length;
+        for (let row = 1; row < aoa.length; row++) {
+            const ca = XLSX.utils.encode_cell({ r: row, c });
+            const cell = ws[ca];
+            if (!cell) continue;
+            cell.s = dStyle(fmt);
+            if (fmt !== "@") cell.z = fmt;
+            const sv = cell.v == null ? "" : String(cell.v);
+            if (sv.length > maxLen) maxLen = sv.length;
+        }
+        colWidths.push({ wch: Math.min(Math.max(maxLen + 2, 12), 40) });
+    }
+    ws["!cols"] = colWidths;
+    ws["!rows"] = [{ hpx: 60 }];
+    ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: COLUMNS.length - 1 } });
+    return ws;
+}
+/* engine_ui */
+
+
+/* ============================================================
+ *  epAutomate v2 — pipeline + UI wiring
+ * ============================================================ */
+const state = { blSim: [], blInp: [], propSim: [], propInp: [] };
+
+const $ = s => document.querySelector(s);
+
+function logLine(html) { const el = $("#log"); el.innerHTML += "\n" + html; el.scrollTop = el.scrollHeight; }
+function logClear() { $("#log").innerHTML = ""; }
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); }
+function readFileText(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsText(file); });
+}
+function numOrNull(id) { const v = $(id).value.trim(); if (v === "") return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
+
+/* --- gather manual rate inputs into a rates object (per-kBtu) --- */
+function gatherRates() {
+    const elecKwh = numOrNull("#elecRate");        // $/kWh
+    const gasTherm = numOrNull("#gasRate");         // $/therm
+    const elecCarbonKwh = numOrNull("#elecCarbon"); // kg/kWh
+    const gasCarbonTherm = numOrNull("#gasCarbon"); // kg/therm
+    return {
+        elec_per_kbtu: elecKwh != null ? elecKwh / 3.412 : 0,
+        gas_per_kbtu: gasTherm != null ? gasTherm / 100 : 0,
+        elec_carbon_per_kbtu: elecCarbonKwh != null ? elecCarbonKwh / 3.412 : 0,
+        gas_carbon_per_kbtu: gasCarbonTherm != null ? gasCarbonTherm / 100 : 0,
+        default_vlt: 0.9,
+    };
+}
+
+/* --- process one SIM (+ optional INP) into a row --- */
+async function processRun(simFile, inpFile, label, climateZone) {
+    logLine(`<span class="dim">  &rsaquo; SIM:</span> <span class="info">${simFile.name}</span> <span class="dim">(${(simFile.size / 1024).toFixed(0)} KB)</span>`);
+    const simText = await readFileText(simFile);
+    const r = new SIMParser(simText, simFile.name).parse();
+    r.option_name = label || simFile.name.replace(/\.[Ss][Ii][Mm]$/, "");
+    r.results_path = simFile.name;
+    r.climate_zone = climateZone || "";
+    if (inpFile) {
+        logLine(`<span class="dim">  &rsaquo; INP:</span> <span class="info">${inpFile.name}</span> <span class="dim">(${(inpFile.size / 1024).toFixed(0)} KB)</span>`);
+        try {
+            const inpText = await readFileText(inpFile);
+            Object.assign(r, new INPParser(inpText, inpFile.name).parse());
+            r.inp_file = inpFile.name;
+        } catch (e) { logLine(`<span class="warn">  &#9888; inp parse failed: ${e.message}</span>`); }
+    }
+    return r;
+}
+
+/* --- main run --- */
+async function run() {
+    if (!state.blSim.length && !state.propSim.length) { toast("Drop at least one .SIM file"); return; }
+    const btn = $("#runBtn"); btn.disabled = true;
+    $("#status").textContent = "Working\u2026"; $("#spinner").classList.add("visible");
+    logClear();
+    const option = $("#optionLabel").value.trim();
+    const cz = $("#climateZone").value;
+    const out = $("#outputName").value.trim() || "energy_results.xlsx";
+    const autoPair = $("#autoPair").checked;
+    const rates = gatherRates();
+    const pair = (sims, inps) => sims.map((s, i) => autoPair && inps[i] ? [s, inps[i]] : [s, null]);
+
+    try {
+        const rateMsg = rates.elec_per_kbtu || rates.gas_per_kbtu ? "manual" : "INP \u203a 0 fallback";
+        logLine(`<span class="dim">  Rates: ${rateMsg} \u00b7 carbon: ${rates.elec_carbon_per_kbtu ? "manual" : "0"}</span>`);
+
+        const blRows = [];
+        if (state.blSim.length) {
+            logLine(`<span class="ok">&#9650; Baseline runs (${state.blSim.length})</span>`);
+            for (const [i, [s, inp]] of pair(state.blSim, state.blInp).entries())
+                blRows.push(await processRun(s, inp, state.blSim.length > 1 ? `${option} BL ${i + 1}` : option, cz));
+        }
+        const propRows = [];
+        if (state.propSim.length) {
+            logLine(`<span class="ok">&#9650; Proposed runs (${state.propSim.length})</span>`);
+            for (const [i, [s, inp]] of pair(state.propSim, state.propInp).entries())
+                propRows.push(await processRun(s, inp, state.propSim.length > 1 ? `${option} Prop ${i + 1}` : option, cz));
+        }
+
+        logLine(`<span class="ok">&#9650; Building workbook\u2026</span>`);
+        const wb = buildWorkbook(blRows, propRows, rates);
+        XLSX.writeFile(wb, out, { bookType: "xlsx", cellStyles: true });
+        logLine(`<span class="ok">&#10003; Saved &rarr; ${out}</span>`);
+
+        if (blRows.length) summarize(blRows[0]);
+        toast("\u2713 Excel downloaded");
+    } catch (e) {
+        console.error(e);
+        logLine(`<span class="err">&#10007; ERROR: ${e.message}</span>`);
+        toast("Error \u2014 see log");
+    } finally {
+        btn.disabled = false; $("#status").textContent = ""; $("#spinner").classList.remove("visible"); updateBtn();
+    }
+}
+
+function summarize(r) {
+    const m = enrichRow(r, gatherRates());
+    const fmt = (n, d = 0) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+    logLine(`\n<span class="dim">\u2500\u2500\u2500 BL Run 1 summary \u2500\u2500\u2500\u2500\u2500</span>`);
+    logLine(`  <span class="hdr">Project</span>           ${r.project_name || ""}`);
+    logLine(`  <span class="hdr">Weather</span>           ${r.weather_file || ""}`);
+    logLine(`  <span class="hdr">Conditioned area</span>  ${fmt(m.conditioned_floor_area)} ft\u00b2`);
+    logLine(`  <span class="hdr">Total area</span>        ${fmt(m.total_floor_area)} ft\u00b2`);
+    logLine(`  <span class="hdr">Total energy</span>      ${fmt(m.total_energy_kbtu)} kBtu`);
+    logLine(`  <span class="hdr">EUI</span>               ${fmt(m.eui_kbtu_ft2, 1)} kBtu/ft\u00b2`);
+    logLine(`  <span class="hdr">Gross wall / roof</span> ${fmt(m.gross_wall_area)} / ${fmt(m.gross_roof_area)} ft\u00b2`);
+    logLine(`  <span class="hdr">Building WWR</span>      ${fmt(m.building_wwr, 1)}%`);
+    logLine(`  <span class="hdr">Wall/Roof/Glass U</span> ${fmt(m.wall_u_value, 3)} / ${fmt(m.roof_u_value, 3)} / ${fmt(m.glass_u_value, 3)}`);
+    logLine(`  <span class="hdr">Glass SHGC/VLT</span>    ${fmt(m.glass_shgc, 3)} / ${fmt(m.glass_vlt, 2)}`);
+    logLine(`  <span class="hdr">Peak htg/clg</span>      ${fmt(m.peak_heating_kbtuh, 0)} / ${fmt(m.peak_cooling_kbtuh, 0)} kBtuh`);
+    logLine(`  <span class="hdr">Chiller/Boiler COP</span> ${fmt(m.chiller_cop, 2)} / ${fmt(m.boiler_cop, 2)}`);
+    logLine(`  <span class="hdr">Supply CFM / fan kW</span> ${fmt(m.total_supply_cfm)} / ${fmt(m.total_fan_kw, 1)}`);
+    if (m.total_cost > 0) logLine(`  <span class="hdr">Energy cost</span>       $${fmt(m.total_cost, 0)}  (${fmt(m.cost_intensity, 2)} $/ft\u00b2)`);
+    if (m.total_carbon_kg > 0) logLine(`  <span class="hdr">Carbon</span>            ${fmt(m.total_carbon_kg)} kg CO\u2082e  (${fmt(m.carbon_intensity, 3)} kg/ft\u00b2)`);
+    logLine(`<span class="warn">  note: Peak cooling = sum of system maxima (non-coincident, ~+6% vs true bldg peak)</span>`);
+    logLine(`<span class="warn">  note: Total Fan kW = supply+return installed; original tool used a different rollup</span>`);
+    logLine(`<span class="warn">  note: Unmet hrs = BEPS throttling-range hours (DOE-2 standard metric)</span>`);
+}
+
+/* --- NREL URDB lookup --- */
+async function doLookup() {
+    const key = $("#nrelKey").value.trim();
+    if (!key) { toast("Paste your NREL API key first"); return; }
+
+    const btn = $("#lookupBtn"); btn.disabled = true; btn.textContent = "\u2026 looking up";
+    try {
+        const lat = parseFloat($("#manualLat").value);
+        const lon = parseFloat($("#manualLon").value);
+        if (isNaN(lat) || isNaN(lon)) { logLine(`<span class="err">&#10007; Enter latitude and longitude first</span>`); toast("Enter lat/lon first"); btn.disabled=false; btn.innerHTML="&#128269; Look up rate"; return; }
+        const res = await nrelUrdbLookup(key, lat, lon);
+        $("#elecRate").value = res.rate.toFixed(4);
+        toast(`\u2713 ${res.rate.toFixed(4)} $/kWh \u2014 ${res.utility || res.name}`);
+        logLine(`<span class="ok">&#9650; URDB lookup</span> <span class="dim">(${lat}, ${lon})</span>: ${res.name} \u2014 <span class="info">${res.rate.toFixed(4)} $/kWh</span> <span class="dim">(${res.utility})</span>`);
+        logLine(`<span class="warn">  &#9888; verify this tier-1 energy rate before generating \u2014 URDB rates can be tiered/seasonal</span>`);
+    } catch (e) {
+        logLine(`<span class="err">&#10007; URDB lookup failed: ${e.message}</span>`);
+        toast("Lookup failed \u2014 see log");
+    } finally { btn.disabled = false; btn.innerHTML = "&#128269; Look up rate by location"; }
+}
+
+/* --- chips / dropzones --- */
+function chipClass(key) { return key === "epw" ? "chip chip-epw" : key.startsWith("bl") ? "chip chip-bl" : "chip chip-prop"; }
+function renderChips() {
+    for (const k of ["blSim", "blInp", "propSim", "propInp"]) {
+        const el = $("#chips-" + k); el.innerHTML = "";
+        state[k].forEach((file, idx) => {
+            const c = document.createElement("span"); c.className = chipClass(k);
+            c.innerHTML = `<span>${file.name}</span><span class="x" title="Remove">\u00d7</span>`;
+            c.querySelector(".x").addEventListener("click", e => { e.stopPropagation(); e.preventDefault(); state[k].splice(idx, 1); renderChips(); updateBtn(); });
+            el.appendChild(c);
+        });
+        const dz = document.querySelector(`[data-target="${k}"]`); if (dz) dz.classList.toggle("has-files", state[k].length > 0);
+    }
+}
+function updateBtn() { $("#runBtn").disabled = !(state.blSim.length || state.propSim.length); }
+
+async function addFiles(target, files) {
+    if (!files || files.length === 0) return;
+    for (const f of files) state[target].push(f);
+    renderChips(); updateBtn();
+}
+
+function bindDropzone(zone) {
+    const target = zone.dataset.target;
+    const input = zone.querySelector("input[type=file]");
+    input.addEventListener("change", e => { if (e.target.files.length) addFiles(target, e.target.files); e.target.value = ""; });
+    ["dragenter", "dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove("drag"); }));
+    zone.addEventListener("drop", e => { if (e.dataTransfer.files.length) addFiles(target, e.dataTransfer.files); });
+}
+
+document.querySelectorAll(".dropzone").forEach(bindDropzone);
+$("#runBtn").addEventListener("click", run);
+$("#lookupBtn").addEventListener("click", doLookup);
+$("#clearBtn").addEventListener("click", () => {
+    state.blSim = []; state.blInp = []; state.propSim = []; state.propInp = [];
+    renderChips(); updateBtn(); updateLookupBtn(); logClear(); logLine(`<span class="dim">Cleared.</span>`);
+});
+
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+renderChips(); updateBtn(); 
+</script>
+</body>
+
+</html>
