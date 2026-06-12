@@ -61,10 +61,18 @@ export interface BaselineRotation {
   int_lighting_kbtu: number; ext_lighting_kbtu: number; int_equip_kbtu: number; ext_equip_kbtu: number;
 }
 
+/** Utility rates the model used — Section 1.5, Table EAp2-3 (Energy Type Summary). */
+export interface TraceUtilityRates {
+  elecBaseline: number; elecProposed: number;     // $/kWh
+  gasBaseline: number; gasProposed: number;        // $/therm
+  description: string;
+}
+
 export interface TraceReport {
   fileName: string; pageCount: number; alternatives: string[];
   general: TraceGeneral | null;
   baselineRotations: BaselineRotation[] | null;
+  utilityRates: TraceUtilityRates | null;
   annualEnergy: AnnualEnergyRow[];
   siteConsumption: SiteConsumption[];
   lighting: LightingDaylight[];
@@ -101,7 +109,7 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   const warnings: string[] = [];
   const report: TraceReport = {
     fileName, pageCount: pages.length, alternatives: [],
-    general: null, baselineRotations: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
+    general: null, baselineRotations: null, utilityRates: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
     monthlyElectricity: null, unmetHeatingHours: null, warnings,
   };
 
@@ -138,6 +146,10 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   // ---- Section 1.6 PRM Compliance: the baseline's 4 rotations (0/90/180/270) ----
   const s16 = pages.find((p) => /Table EAp2-4 - Baseline Performance/.test(p.text));
   if (s16) report.baselineRotations = parseBaselineRotations(s16.text);
+
+  // ---- Section 1.5 Energy Type Summary (Table EAp2-3): the model's utility rates ----
+  const s15 = pages.find((p) => /Table EAp2-3|Utility Rate Description/.test(p.text));
+  if (s15) report.utilityRates = parseUtilityRates(s15.text);
 
   // ---- Economic ----
   const ec = pages.find((p) => p.text.startsWith("Economic Alternative Comparison"));
@@ -468,6 +480,18 @@ function parseBaselineRotations(t: string): BaselineRotation[] | null {
     int_lighting_kbtu: E("Interior Lighting", r) * KWH_TO_KBTU, ext_lighting_kbtu: E("Exterior Lighting", r) * KWH_TO_KBTU,
     int_equip_kbtu: E("Interior Equipment", r) * KWH_TO_KBTU, ext_equip_kbtu: E("Exterior Equipment", r) * KWH_TO_KBTU,
   }));
+}
+
+/** Table EAp2-3 → electricity & gas virtual rates ($/kWh, $/therm). */
+function parseUtilityRates(t: string): TraceUtilityRates | null {
+  const e = t.match(/Electricity\s+(.*?)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+kWh/);
+  const g = t.match(/Natural Gas\s+(-?[\d.]+)\s+(-?[\d.]+)/);
+  if (!e && !g) return null;
+  return {
+    elecBaseline: e ? +e[2] : 0, elecProposed: e ? +e[3] : 0,
+    gasBaseline: g ? +g[1] : 0, gasProposed: g ? +g[2] : 0,
+    description: e ? e[1].trim() : "",
+  };
 }
 
 export interface TraceModel { name: string; row: Row; cat: "leed" | "code" | "proposed"; rot: number; }

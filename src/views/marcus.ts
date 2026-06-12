@@ -11,6 +11,8 @@ import { SIMParser, Row } from "../engine/sim";
 import { INPParser } from "../engine/inp";
 import { loadTracePages } from "../engine/trace-load";
 import { parseTrace, traceModels } from "../engine/trace";
+import { geocodeAddress } from "../engine/rates";
+import { gatherElectricity, gatherGas, gatherCarbon, pickMax, GatherOpts } from "../engine/sources";
 import { enrichRow } from "../engine/enrich";
 import { buildWorkbook, downloadWorkbook } from "../engine/workbook";
 import { COLUMNS } from "../engine/columns";
@@ -223,6 +225,7 @@ async function parseProject(root: HTMLElement, p: Project) {
   prog.classList.remove("hide");
   try {
     let models: ParsedModel[] = [];
+    let modelRates: ModelRates | null = null;
     if (p.modelType === "equest") {
       pl.textContent = "Parsing eQUEST models…";
       models = await parseEquestModels(p);
@@ -235,12 +238,15 @@ async function parseProject(root: HTMLElement, p: Project) {
       const report = parseTrace(pages, pdf.name); store.trace = report;
       // Section 1.6 supplies the baseline's 0/90/180/270 rotations — expand & pre-tag them
       models = traceModels(report).map((m) => ({ name: m.name, row: m.row, cat: m.cat, rot: m.rot }));
+      // Section 1.5 (Table EAp2-3) supplies the model's utility rates — prefer proposed, else baseline
+      const u = report.utilityRates;
+      if (u) modelRates = { elec: u.elecProposed || u.elecBaseline, gas: u.gasProposed || u.gasBaseline, descr: u.description };
     } else throw new Error("IES-VE parser is under development");
 
     if (!models.length) throw new Error("no models parsed — check the uploaded files");
     prog.classList.add("hide");
     logLine(`<span class="ok">✓ Parsed ${models.length} model(s) — assign each below</span>`); paintLog();
-    classifyModal(root, p, models);            // human-in-the-loop assignment
+    classifyModal(root, p, models, modelRates);  // human-in-the-loop assignment + rate source
   } catch (e: any) {
     logLine(`<span class="err">✗ ${esc(e.message)}</span>`);
     toast("Parse failed — " + e.message); paintLog();
@@ -279,7 +285,9 @@ function guessClass(name: string): { cat: "leed" | "code" | "proposed"; rot: num
 }
 
 /* ---------- classification modal (human in the loop) ---------- */
-function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
+type ModelRates = { elec: number; gas: number; descr: string };
+
+function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[], modelRates: ModelRates | null) {
   const rowHtml = (m: ParsedModel, i: number) => {
     const g = guessClass(m.name);
     const cat = m.cat ?? g.cat;          // engine-supplied (e.g. TRACE §1.6 rotations) wins over the name guess
@@ -293,13 +301,27 @@ function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
         <option value="proposed" ${cat === "proposed" ? "selected" : ""}>Proposed</option>
       </select>${rotSel}</div>`;
   };
+  const c = store.rates;
+  // Default rate source: prefer model rates, else whatever the finder already set, else manual
+  const defSrc = modelRates ? "model" : (c.elec_per_kwh != null ? "finder" : "manual");
   const overlay = h(`
-    <div class="modal-overlay"><div class="modal" style="max-width:660px"><div class="modal-hd"><h3>Assign models</h3><span class="x">${ICON.close("x")}</span></div>
+    <div class="modal-overlay"><div class="modal" style="max-width:680px"><div class="modal-hd"><h3>Assign models &amp; rates</h3><span class="x">${ICON.close("x")}</span></div>
       <div class="modal-body">
-        <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Tell us what each parsed model is. <b>LEED</b> rotations fill the first 4 rows of <b>BL Data</b> (0°/90°/180°/270°), <b>Code</b> rotations the next 4; <b>Proposed</b> cases fill the <b>Proposed Data</b> sheet in order.</p>
+        <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Tell us what each parsed model is. <b>LEED</b> rotations fill the first 4 rows of <b>BL Data</b> (0°/90°/180°/270°), <b>Code</b> rotations the next 4; <b>Proposed</b> cases fill the <b>Proposed Data</b> sheet (rotations are averaged).</p>
         <div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:8px"><div>Model</div><div>Category</div><div>Rotation</div></div>
         ${models.map(rowHtml).join("")}
+        <div style="border-top:1px solid var(--g200);margin-top:16px;padding-top:14px">
+          <div style="font-family:var(--font);font-weight:800;font-size:14px;margin-bottom:4px">Utility rates → Project Info</div>
+          <p style="font-size:11.5px;color:var(--g500);margin-bottom:10px">Used for the energy-cost &amp; carbon calculations on the Project Info sheet.</p>
+          <select class="unit-pick" id="cm-ratesrc" style="width:100%">
+            <option value="model" ${defSrc === "model" ? "selected" : ""} ${modelRates ? "" : "disabled"}>From the energy model (Table EAp2-3)${modelRates ? "" : " — not found"}</option>
+            <option value="finder" ${defSrc === "finder" ? "selected" : ""}>Our utility-rate finder (from project address)</option>
+            <option value="manual" ${defSrc === "manual" ? "selected" : ""}>Enter manually</option>
+          </select>
+          <div id="cm-rate-detail" style="margin-top:10px"></div>
+        </div>
         <button class="btn btn-primary" id="cm-go" style="width:100%;justify-content:center;margin-top:16px">${ICON.bolt()} Populate</button>
+        <div id="cm-status" style="font-size:12px;color:var(--g500);margin-top:8px;text-align:center"></div>
       </div></div></div>`);
   document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
   const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); };
@@ -307,17 +329,88 @@ function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
   overlay.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((sel) => sel.addEventListener("change", () => {
     (overlay.querySelector(`.cm-rot[data-i="${sel.dataset.i}"]`) as HTMLSelectElement).disabled = sel.value === "proposed";
   }));
-  overlay.querySelector("#cm-go")!.addEventListener("click", () => {
-    const bl: Row[] = [], prop: Row[] = [];
-    models.forEach((m, i) => {
-      const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
-      const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
-      m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
-      (cat === "proposed" ? prop : bl).push(m.row);
-    });
-    close();
-    finishParse(root, p, bl, prop);
+
+  const detail = overlay.querySelector("#cm-rate-detail") as HTMLElement;
+  const num = (v: any) => (v != null ? v : "");
+  const renderDetail = (src: string) => {
+    if (src === "model" && modelRates) {
+      detail.innerHTML = `<div class="source-note" style="border-left-color:var(--g300)">Electricity <b>$${fmt(modelRates.elec, 4)}/kWh</b> · Natural Gas <b>$${fmt(modelRates.gas, 4)}/therm</b>${modelRates.descr ? ` <span style="color:var(--g400)">(${esc(modelRates.descr)})</span>` : ""}</div>`;
+    } else if (src === "finder") {
+      detail.innerHTML = `<div class="source-note" style="border-left-color:var(--g300)">Sources electricity, gas &amp; carbon for <b>${esc(p.address || "the project address")}</b> via NREL / EIA / Cambium when you click Populate.</div>`;
+    } else {
+      detail.innerHTML = `<div class="grid cards-3" style="gap:10px">
+        <div class="field"><label>Electricity ($/kWh)</label><input id="cm-elec" type="number" step="0.001" value="${num(c.elec_per_kwh)}" placeholder="0.137" /></div>
+        <div class="field"><label>Natural Gas ($/therm)</label><input id="cm-gas" type="number" step="0.001" value="${num(c.gas_per_therm)}" placeholder="0.49" /></div>
+        <div class="field"><label>Carbon (kg CO2e/kWh)</label><input id="cm-carbon" type="number" step="0.001" value="${num(c.elec_carbon_per_kwh)}" placeholder="0.45" /></div>
+      </div>`;
+    }
+  };
+  const srcSel = overlay.querySelector("#cm-ratesrc") as HTMLSelectElement;
+  srcSel.addEventListener("change", () => renderDetail(srcSel.value));
+  renderDetail(defSrc);
+
+  overlay.querySelector("#cm-go")!.addEventListener("click", async () => {
+    const go = overlay.querySelector("#cm-go") as HTMLButtonElement;
+    const status = overlay.querySelector("#cm-status") as HTMLElement;
+    go.disabled = true;
+    try {
+      const src = srcSel.value;
+      if (src === "model" && modelRates) {
+        c.elec_per_kwh = modelRates.elec; c.gas_per_therm = modelRates.gas;
+        c.rate_structure = "from model"; c.rate_source = `Energy model — TRACE Table EAp2-3${modelRates.descr ? ` (${modelRates.descr})` : ""}`;
+      } else if (src === "finder") {
+        status.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Finding utility rates…`;
+        await autoFindRates(p);
+      } else {
+        const g = (id: string) => { const v = (overlay.querySelector(id) as HTMLInputElement)?.value.trim(); return v === "" ? null : +v; };
+        const e = g("#cm-elec"), ga = g("#cm-gas"), cb = g("#cm-carbon");
+        if (e != null) { c.elec_per_kwh = e; c.rate_source = "Manually entered"; c.rate_structure = "manual"; }
+        if (ga != null) c.gas_per_therm = ga;
+        if (cb != null) { c.elec_carbon_per_kwh = cb; c.carbon_method = "manual"; c.carbon_source = "Manually entered"; }
+      }
+      emit();
+      const bl: Row[] = [], prop: Row[] = [];
+      models.forEach((m, i) => {
+        const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
+        const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
+        m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
+        (cat === "proposed" ? prop : bl).push(m.row);
+      });
+      close();
+      finishParse(root, p, bl, prop);
+    } catch (e: any) {
+      status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`;
+      go.disabled = false;
+    }
   });
+}
+
+/** Source electricity / gas / carbon for the project via our rate finder. */
+async function autoFindRates(p: Project) {
+  const c = store.rates;
+  if (c.lat == null || !c.state) {
+    if (!p.address) throw new Error("project has no address — add one or use the Utility Rates tab");
+    const info = await geocodeAddress({ city: p.address });
+    c.state = info.state; c.lat = info.lat; c.lon = info.lon;
+    c.location_name = (info as any).location_name || p.address;
+    if ((info as any).city) c.city = (info as any).city;
+    if ((info as any).country) c.country = (info as any).country;
+  }
+  const o: GatherOpts = {
+    state: c.state, lat: c.lat, lon: c.lon, nrelKey: store.nrelKey, eiaKey: store.eiaKey,
+    openaiKey: store.openaiKey, openaiModel: store.openaiModel,
+    locationText: c.location_name || c.state, touProfile: c.tou_profile,
+  };
+  const [e, g, cb] = await Promise.all([
+    gatherElectricity(o).catch(() => ({ candidates: [], errors: [] })),
+    gatherGas(o).catch(() => ({ candidates: [], errors: [] })),
+    gatherCarbon(o).catch(() => ({ candidates: [], errors: [] })),
+  ]);
+  const me = pickMax(e.candidates), mg = pickMax(g.candidates), mc = pickMax(cb.candidates);
+  if (me) { c.elec_per_kwh = me.value; c.rate_source = `${me.source} (ref: ${me.url})`; c.rate_structure = me.live ? "aggregated (live)" : "aggregated (ref)"; }
+  if (mg) { c.gas_per_therm = mg.value; c.gas_source = `${mg.source} (ref: ${mg.url})`; }
+  if (mc) { c.elec_carbon_per_kwh = mc.value; c.carbon_method = "manual"; c.carbon_source = `${mc.source} (ref: ${mc.url})`; }
+  if (!me && !mg && !mc) throw new Error("no rates found for this location");
 }
 
 /** Average proposed rotations into a single final proposed row. Numeric fields
@@ -342,8 +435,8 @@ async function finishParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[]
   store.blRows = bl; store.propRows = prop;
   logLine(`<span class="ok">✓ Assigned ${bl.length} baseline · ${prop.length} proposed</span>`);
   const summary = computeSummary(bl, prop);
-  await Projects.update(p.id, { parsed: { bl, prop, summary }, modelType: p.modelType });
-  p.parsed = { bl, prop, summary } as any;
+  await Projects.update(p.id, { parsed: { bl, prop, summary }, rates: store.rates, modelType: p.modelType });
+  p.parsed = { bl, prop, summary } as any; p.rates = store.rates as any;
   emit(); toast(`✓ Populated ${bl.length + prop.length} model(s)`);
   rerender(root);
   setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
