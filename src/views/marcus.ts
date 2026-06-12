@@ -315,7 +315,7 @@ function ratesAccordion(root: HTMLElement, p: Project): HTMLElement {
     ["Water", c.water_per_kgal != null ? `$${fmt(c.water_per_kgal, 3)}/kGal` : "—", "#71717a"],
   ];
   const grid = h(`<div class="grid cards-4" style="margin-top:6px"></div>`);
-  items.forEach(([cat, val, color]) => grid.appendChild(h(`<div style="border:1px solid var(--g200);border-radius:12px;padding:14px 16px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="width:9px;height:9px;border-radius:3px;background:${color};display:inline-block"></span><span style="font-family:'Syne';font-weight:800;font-size:14px">${esc(cat)}</span></div><div style="font-size:15px;font-weight:500;color:var(--g700)">${esc(val)}</div></div>`)));
+  items.forEach(([cat, val, color]) => grid.appendChild(h(`<div style="border:1px solid var(--g200);border-radius:12px;padding:14px 16px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="width:9px;height:9px;border-radius:3px;background:${color};display:inline-block"></span><span style="font-family:var(--font);font-weight:800;font-size:14px">${esc(cat)}</span></div><div style="font-size:15px;font-weight:500;color:var(--g700)">${esc(val)}</div></div>`)));
   body.appendChild(grid);
   const bar = h(`<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center"><button class="btn btn-sm" id="ra-edit">${ICON.rates("x")} Edit / find rates</button><button class="btn btn-sm" id="ra-save">Save these rates to project</button><select class="unit-pick" id="ra-load" style="min-width:200px"><option value="">— load a saved rate set —</option></select></div>`);
   body.appendChild(bar);
@@ -341,7 +341,7 @@ function aiAccordion(): HTMLElement {
     if (!q) return;
     const out = body.querySelector("#ai-out") as HTMLElement;
     out.innerHTML = `<div class="ai-answer"><span class="spinner"></span> Searching…</div>`;
-    try { const ans = await aiSearch(q); out.innerHTML = `<div class="ai-answer"><div>${esc(ans.answer)}</div>${ans.value ? `<div style="margin-top:6px;font-size:18px;font-family:'Syne';font-weight:800;color:#fff">${esc(ans.value)}</div>` : ""}<div class="where">↳ ${esc(ans.where || "")}</div></div>`; }
+    try { const ans = await aiSearch(q); out.innerHTML = `<div class="ai-answer"><div>${esc(ans.answer)}</div>${ans.value ? `<div style="margin-top:6px;font-size:18px;font-family:var(--font);font-weight:800;color:#fff">${esc(ans.value)}</div>` : ""}<div class="where">↳ ${esc(ans.where || "")}</div></div>`; }
     catch (e: any) { out.innerHTML = `<div class="ai-answer" style="background:var(--red-dark)">Search failed: ${esc(e.message)}</div>`; }
   };
   body.querySelector("#ai-go")!.addEventListener("click", go);

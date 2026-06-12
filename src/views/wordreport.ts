@@ -102,7 +102,7 @@ function genCard(root: HTMLElement): HTMLElement {
 function feat(icon: string, title: string, sub: string): string {
   return `<div style="border:1px solid var(--g200);border-radius:12px;padding:14px 16px">
     <div style="font-size:20px;margin-bottom:6px">${icon}</div>
-    <div style="font-family:'Syne';font-weight:800;font-size:14px">${title}</div>
+    <div style="font-family:var(--font);font-weight:800;font-size:14px">${title}</div>
     <div style="font-size:12px;color:var(--g500);margin-top:2px">${sub}</div></div>`;
 }
 

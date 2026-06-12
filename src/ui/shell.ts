@@ -54,7 +54,7 @@ export function mountShell(app: HTMLElement) {
 
   // ----- sidebar -----
   const sidebar = h(`<aside class="sidebar"></aside>`);
-  sidebar.appendChild(h(`<div class="brand"><div class="brand-mark">M</div><div class="brand-name">Marc<b>us</b></div></div>`));
+  sidebar.appendChild(h(`<div class="brand"><div class="brand-name">Marc<b>us</b></div></div>`));
   navContainer = h(`<nav style="flex:1"></nav>`);
   for (const group of ["menu", "general"]) {
     navContainer.appendChild(h(`<div class="nav-label">${group === "menu" ? "Workspace" : "More"}</div>`));

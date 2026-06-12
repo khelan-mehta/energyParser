@@ -234,11 +234,11 @@ function renderSummary(card: HTMLElement, b: any, p: any, sav: string, csav: str
   });
 }
 function kpi(v: string, l: string): string {
-  return `<div style="border:1px solid var(--g200);border-radius:12px;padding:14px 16px"><div style="font-family:'Syne';font-weight:800;font-size:22px;color:var(--red)">${esc(v)}</div><div style="font-size:11px;color:var(--g500);margin-top:2px">${esc(l)}</div></div>`;
+  return `<div style="border:1px solid var(--g200);border-radius:12px;padding:14px 16px"><div style="font-family:var(--font);font-weight:800;font-size:22px;color:var(--red)">${esc(v)}</div><div style="font-size:11px;color:var(--g500);margin-top:2px">${esc(l)}</div></div>`;
 }
 function envTable(e: any): string {
   const o = (az: string) => { const x = e.orient(az); return x.wall ? (x.glaze / x.wall * 100).toFixed(1) + "%" : "—"; };
-  return `<h4 style="margin:16px 0 4px;font-family:'Syne';font-weight:800">Envelope (proposed) — written to Shading/Fenestration + Opaque</h4>
+  return `<h4 style="margin:16px 0 4px;font-family:var(--font);font-weight:800">Envelope (proposed) — written to Shading/Fenestration + Opaque</h4>
   <div style="overflow-x:auto"><table class="final-table mepc-table"><thead><tr><th style="text-align:left">Orientation</th><th>Gross wall (sf)</th><th>Glazing (sf)</th><th>WWR</th></tr></thead><tbody>
    ${["NORTH", "EAST", "SOUTH", "WEST"].map((az) => { const x = e.orient(az); return `<tr><td class="l">${az}</td><td>${x.wall.toLocaleString()}</td><td>${x.glaze.toLocaleString()}</td><td>${o(az)}</td></tr>`; }).join("")}
   </tbody></table></div>

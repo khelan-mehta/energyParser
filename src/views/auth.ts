@@ -13,7 +13,7 @@ export function renderAuth(app: HTMLElement, onAuthed: () => void) {
     const wrap = h(`<div class="auth-wrap"></div>`);
     const card = h(`
       <div class="auth-card">
-        <div class="auth-brand"><div class="brand-mark" style="width:44px;height:44px;font-size:24px">M</div><div><div class="auth-name">Marcus</div><div class="auth-tag">Energy Model Studio</div></div></div>
+        <div class="auth-brand"><div><div class="auth-name">Marcus</div><div class="auth-tag">Energy Model Studio</div></div></div>
         ${pending ? pendingHtml() : formHtml(mode)}
       </div>
     `);

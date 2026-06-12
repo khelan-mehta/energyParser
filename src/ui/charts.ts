@@ -13,7 +13,7 @@ Chart.register(
 
 export const PALETTE = ["#E4002B", "#0c0c0d", "#a1a1aa", "#71717a", "#d4d4d8", "#b30022", "#52525b", "#e4e4e7"];
 
-Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.font.family = "'Franklin Gothic Book', 'Libre Franklin', 'Segoe UI', Arial, sans-serif";
 Chart.defaults.color = "#71717a";
 Chart.defaults.font.size = 11;
 
