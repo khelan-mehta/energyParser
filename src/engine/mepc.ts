@@ -293,7 +293,7 @@ export async function fillXlsm(R: any, tplBuf: ArrayBuffer, log: LogFn): Promise
   const { base, rots, baseRowsData, propData, qa, qp, env, lLPD, lArea, ePD, proj, cz } = R;
   log("Opening template & injecting cells (JSZip)…");
   const zip = await JSZip.loadAsync(tplBuf);
-  const SH = makeStyleHL(await zip.file("xl/styles.xml")!.async("string")); HL = SH.yellowFor;  // highlight every written cell yellow
+  HL = null;  // no highlighting — written cells keep the template's original formatting
 
   /* --- General Information (sheet3.xml) --- */
   let gi = await zip.file("xl/worksheets/sheet3.xml")!.async("string");
@@ -404,9 +404,6 @@ export async function fillXlsm(R: any, tplBuf: ArrayBuffer, log: LogFn): Promise
     : wb.replace("</workbook>", '<calcPr calcId="0" fullCalcOnLoad="1"/></workbook>');
   zip.file("xl/workbook.xml", wb);
   log("  workbook.xml: calcId=0 + fullCalcOnLoad=1 (forces full recalc of all formulas on open)");
-
-  HL = null; zip.file("xl/styles.xml", SH.finalize());  // commit the yellow-highlight styles
-  log("  styles.xml: every written cell highlighted yellow");
 
   log("Re-zipping .xlsm…");
   const blob = await zip.generateAsync({

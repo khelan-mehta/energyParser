@@ -39,12 +39,26 @@ export interface LightingDaylight {
 export interface Dir { north: number; east: number; south: number; west: number; total: number; }
 export interface EconomicRow { alternative: string; yearlySavings: number; operatingCost: number; utilityCost: number; }
 
+/** "Project Summary" report — one per alternative. Cleanly formatted
+    "Label value unit" pairs that fill ~16 columns the consumption tables
+    don't cover (areas, densities, airflows, peaks, unmet hours). */
+export interface ProjectSummary {
+  alternative: string;
+  conditionedArea: number; totalArea: number; grossWallArea: number; wwr: number;
+  grossRoofArea: number; skylightRatio: number;
+  plugLoadDensity: number; lightingDensity: number; peakOccupancy: number;
+  siteVentilation: number; coolingAirflow: number; heatingAirflow: number;
+  peakCoolingTons: number; peakHeatingMBh: number; peakElecKw: number;
+  unmetCooling: number; unmetHeating: number;
+}
+
 export interface TraceReport {
   fileName: string; pageCount: number; alternatives: string[];
   general: TraceGeneral | null;
   annualEnergy: AnnualEnergyRow[];
   siteConsumption: SiteConsumption[];
   lighting: LightingDaylight[];
+  projectSummary: ProjectSummary[];
   economic: EconomicRow[];
   monthlyElectricity: { months: string[]; total: number[] } | null;
   unmetHeatingHours: number | null;
@@ -77,7 +91,7 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   const warnings: string[] = [];
   const report: TraceReport = {
     fileName, pageCount: pages.length, alternatives: [],
-    general: null, annualEnergy: [], siteConsumption: [], lighting: [], economic: [],
+    general: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
     monthlyElectricity: null, unmetHeatingHours: null, warnings,
   };
 
@@ -93,16 +107,23 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
 
   // ---- Site Consumption Summary (every alternative) ----
   for (const p of pages.filter((x) => x.text.startsWith("Site Consumption Summary"))) {
-    const sc = parseSiteConsumption(p.text, p.alt);
+    const sc = parseSiteConsumption(p.text, p.alt || altOf(p.text));
     if (sc.components.length) report.siteConsumption.push(sc);
   }
   if (!report.siteConsumption.length) warnings.push("Site Consumption Summary (energy-consumption) not found.");
 
   // ---- Lighting & Daylighting (every alternative) ----
   for (const p of pages.filter((x) => x.text.startsWith("Lighting and Daylighting Summary"))) {
-    report.lighting.push(parseLighting(p.text, p.alt));
+    report.lighting.push(parseLighting(p.text, p.alt || altOf(p.text)));
   }
   if (!report.lighting.length) warnings.push("Lighting and Daylighting Summary not found.");
+
+  // ---- Project Summary (every alternative) — fills areas, densities,
+  //      airflows, peaks, and unmet hours that the consumption tables omit ----
+  for (const p of pages.filter((x) => x.text.startsWith("Project Summary"))) {
+    report.projectSummary.push(parseProjectSummary(p.text, p.alt || altOf(p.text)));
+  }
+  if (!report.projectSummary.length) warnings.push("Project Summary not found.");
 
   // ---- Economic ----
   const ec = pages.find((p) => p.text.startsWith("Economic Alternative Comparison"));
@@ -126,7 +147,7 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
 
 function parseGeneral(t: string): TraceGeneral {
   const fa = t.match(/Total gross floor area\s+([\d,.]+)\s*ft/);
-  const cz = t.match(/Climate Zone\s+([0-9][A-Za-z]?(?:[ -][A-Za-z]+)?)/);
+  const cz = t.match(/Climate Zone\s+([0-9]+)\s*([A-C])\b/);
   const wf = t.match(/Weather File\s+(.+?)\s+Heating Degree Days/);
   const cal = t.match(/Calculated at:\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4}[^]*?[AP]M)/);
   const src = t.match(/([A-Za-z0-9_.\-]+\.mdf)/);
@@ -134,7 +155,7 @@ function parseGeneral(t: string): TraceGeneral {
     simulation: after(t, "Simulation Program", /([^]*?)\s+Energy Code/) || "TRACE 3D Plus",
     energyCode: after(t, "Energy Code", /([^]*?)\s+(?:Baseline|Building Type)/) || "",
     buildingType: after(t, "Building Type", /([^]*?)\s+Percent/) || "",
-    climateZone: cz ? cz[1].trim() : "",
+    climateZone: cz ? cz[1] + cz[2] : "",
     floors: after(t, "Quantity of Floors", /(\d+)/) || "",
     grossFloorArea: fa ? parseFloat(fa[1].replace(/,/g, "")) : 0,
     weatherFile: wf ? wf[1].trim() : "",
@@ -221,6 +242,30 @@ function parseLighting(t: string, alt: string): LightingDaylight {
     skylightArea: sky ? parseFloat(sky[1].replace(/,/g, "")) : 0,
     skylightRatio: skyR ? parseFloat(skyR[1]) : 0,
     interiorLpd: null,
+  };
+}
+
+function parseProjectSummary(t: string, alt: string): ProjectSummary {
+  const n = (re: RegExp) => { const m = t.match(re); return m ? parseFloat(m[1].replace(/,/g, "")) : 0; };
+  return {
+    alternative: alt,
+    conditionedArea: n(/Conditioned Floor Area\s+([\d,]+(?:\.\d+)?)\s*ft/),
+    totalArea: n(/Total Building Area\s+([\d,]+(?:\.\d+)?)\s*ft/),
+    grossWallArea: n(/Gross Wall Area\s+([\d,]+(?:\.\d+)?)\s*ft/),
+    wwr: n(/Window-Wall Ratio\s+([\d.]+)\s*%/),
+    grossRoofArea: n(/Gross Roof Area\s+([\d,]+(?:\.\d+)?)\s*ft/),
+    skylightRatio: n(/Skylight-Roof Ratio\s+([\d.]+)\s*%/),
+    plugLoadDensity: n(/Average Plug Load Density\s+([\d.]+)/),
+    lightingDensity: n(/Average Lighting Density\s+([\d.]+)/),
+    peakOccupancy: n(/Peak Occupancy\s+([\d,]+(?:\.\d+)?)/),
+    siteVentilation: n(/Site Ventilation\s+([\d,]+(?:\.\d+)?)\s*cfm/),
+    coolingAirflow: n(/Cooling Specific Air Flow\s+([\d,]+(?:\.\d+)?)\s*cfm/),
+    heatingAirflow: n(/Heating Specific Air Flow\s+([\d,]+(?:\.\d+)?)\s*cfm/),
+    peakCoolingTons: n(/Site Peak Cooling Load\s+([\d,]+(?:\.\d+)?)\s*tons/),
+    peakHeatingMBh: n(/Site Peak Heating Load\s+([\d,]+(?:\.\d+)?)\s*MBh/),
+    peakElecKw: n(/Annual Peak Electrical Demand\s+([\d,]+(?:\.\d+)?)\s*kW/),
+    unmetCooling: n(/Unmet cooling load hours[\s\S]*?This Building:\s*([\d,]+)/),
+    unmetHeating: n(/Unmet heating load hours[\s\S]*?This Building:\s*([\d,]+)/),
   };
 }
 
@@ -347,6 +392,32 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
       row.roof_to_floor_ratio = light.grossRoofArea / gfa;
       row.envelope_to_floor_ratio = row.wall_to_floor_ratio + row.roof_to_floor_ratio;
     }
+  }
+
+  // Project Summary — areas, densities, airflows, peaks, unmet hours
+  const ps = r.projectSummary.find((p) => p.alternative && site.alternative && p.alternative === site.alternative)
+    || r.projectSummary[idx] || r.projectSummary[0];
+  if (ps) {
+    const area = ps.conditionedArea || gfa || 1;
+    const r1 = (x: number) => Math.round(x * 10) / 10;
+    const r3 = (x: number) => Math.round(x * 1000) / 1000;
+    if (ps.conditionedArea) row.conditioned_floor_area = ps.conditionedArea;
+    if (ps.totalArea) row.total_floor_area = ps.totalArea;
+    if (ps.grossWallArea) { row.gross_wall_area = ps.grossWallArea; if (!row.above_ground_wall_area) row.above_ground_wall_area = ps.grossWallArea; }
+    if (ps.wwr && !row.building_wwr) row.building_wwr = ps.wwr;
+    if (ps.grossRoofArea && !row.gross_roof_area) row.gross_roof_area = ps.grossRoofArea;
+    if (ps.skylightRatio) row.skylight_ratio = ps.skylightRatio;
+    if (ps.lightingDensity) { row.lpd_w_ft2 = ps.lightingDensity; row.lpd_total_w_ft2 = ps.lightingDensity; }
+    if (ps.plugLoadDensity) { row.epd_w_ft2 = ps.plugLoadDensity; row.epd_total_w_ft2 = ps.plugLoadDensity; }
+    if (ps.peakOccupancy) { row.occ_density_ft2_person = r1(area / ps.peakOccupancy); row.cond_occ_density_ft2_person = row.occ_density_ft2_person; }
+    if (ps.siteVentilation) { row.total_supply_cfm = ps.siteVentilation; row.vent_cfm_per_ft2 = r3(ps.siteVentilation / area); }
+    if (ps.coolingAirflow) { row.total_clg_cfm = ps.coolingAirflow; row.clg_cfm_per_ft2 = r3(ps.coolingAirflow / area); }
+    if (ps.heatingAirflow) { row.total_htg_cfm = ps.heatingAirflow; row.htg_cfm_per_ft2 = r3(ps.heatingAirflow / area); }
+    if (ps.peakCoolingTons) { row.peak_cooling_kbtuh = r1(ps.peakCoolingTons * 12); row.peak_cooling_btuh_ft2 = r1(ps.peakCoolingTons * 12000 / area); }
+    if (ps.peakHeatingMBh) { row.peak_heating_kbtuh = r1(ps.peakHeatingMBh); row.peak_heating_btuh_ft2 = r1(ps.peakHeatingMBh * 1000 / area); }
+    if (ps.peakElecKw) { row.peak_elec_w = ps.peakElecKw * 1000; row.peak_elec_w_per_ft2 = r1(ps.peakElecKw * 1000 / area); }
+    if (ps.unmetCooling) row.unmet_cooling_hrs = ps.unmetCooling;
+    if (ps.unmetHeating) row.unmet_heating_hrs = ps.unmetHeating;
   }
   return row;
 }

@@ -42,7 +42,7 @@ function eyeSprite(dx: number, dy: number, blink = false): string[] {
   const inner = EYE_W - 2;                          // chars between the frame
   const rows = [
     ("." + "#".repeat(inner) + ".").split(""),      // upper lid
-    ("#" + " ".repeat(inner) + "#").split(""),      // open eye
+    ("#" + "#".repeat(inner) + "#").split(""),      // open eye
     ("'" + "#".repeat(inner) + "'").split(""),      // lower lid
   ];
   if (blink) return [rows[0].join(""), "(" + "-".repeat(inner) + ")", rows[2].join("")];

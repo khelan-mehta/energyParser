@@ -30,6 +30,13 @@ function escXml(s: any) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** 0-based column index → spreadsheet letters (0→A, 25→Z, 26→AA, 131→EB). */
+function colLetter(n: number): string {
+  let s = ""; n++;
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
 /** display-name → worksheet xml path, via workbook.xml + its rels. */
 async function sheetPathMap(zip: JSZip): Promise<Record<string, string>> {
   const wbXml = await zip.file("xl/workbook.xml")!.async("string");
@@ -61,10 +68,14 @@ function injectSheet(xml: string, rows: Row[], cfg: RateConfig): string {
   if (!proto) return xml;
   const protoAttrs = proto[1];
 
-  // ordered [{col, attrs}] from the prototype data row (e.g. {col:"A", attrs:' s="13"'})
-  const cells: { col: string; attrs: string }[] = [];
+  // map column-letter → ONLY the style attr (s="N") from the prototype data row.
+  // The row may be SPARSE (Excel omits empty cells) so we key by real column
+  // letter. We deliberately drop any cell TYPE (t="s"/"str"/…) and value the
+  // prototype carried — otherwise a leftover t="s" collides with the type we add
+  // and produces malformed XML that Excel silently "repairs" (wiping the sheet).
+  const protoAttrByCol: Record<string, string> = {};
   for (const cm of proto[2].matchAll(/<c r="([A-Z]+)2"([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g))
-    cells.push({ col: cm[1], attrs: cm[2] });
+    protoAttrByCol[cm[1]] = (cm[2].match(/\ss="\d+"/) || [""])[0];
 
   const lastCol = COLUMNS.length - 1;
   const dataRows: string[] = [];
@@ -72,8 +83,9 @@ function injectSheet(xml: string, rows: Row[], cfg: RateConfig): string {
     const R = i + 2; // header is row 1; data starts at row 2
     const merged = enrichRow(rows[i], cfg);
     let cs = "";
-    for (let c = 0; c <= lastCol && c < cells.length; c++) {
-      const { col, attrs } = cells[c];
+    for (let c = 0; c <= lastCol; c++) {
+      const col = colLetter(c);
+      const attrs = protoAttrByCol[col] || "";
       const fmt = COLUMNS[c][2];
       let v: any = merged[COLUMNS[c][1]];
       if (v === undefined || v === null) v = fmt === "@" ? "" : 0;
@@ -85,22 +97,66 @@ function injectSheet(xml: string, rows: Row[], cfg: RateConfig): string {
     dataRows.push(`<row r="${R}"${protoAttrs}>${cs}</row>`);
   }
 
-  const lastColLetter = cells.length ? cells[Math.min(lastCol, cells.length - 1)].col : "A";
+  const lastColLetter = colLetter(lastCol);
   const lastRow = Math.max(rows.length + 1, 1);
   return xml
     .replace(/<sheetData>[\s\S]*?<\/sheetData>/, () => `<sheetData>${headerRow}${dataRows.join("")}</sheetData>`)
     .replace(/<dimension ref="[^"]*"\/>/, () => `<dimension ref="A1:${lastColLetter}${lastRow}"/>`);
 }
 
-/** Clone the styled template and populate its BL / Proposed sheets.
-    Returns a ready-to-download .xlsx Blob. */
-export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateConfig): Promise<Blob> {
+/** Set a single existing cell's value in a worksheet's XML, keeping its style
+    (s="N") and choosing the correct type (number vs inline string). Used for the
+    handful of "Project Info" metadata inputs. */
+function setSheetCellValue(xml: string, addr: string, value: string | number): string {
+  const isNum = typeof value === "number" && isFinite(value);
+  const re = new RegExp(`<c r="${addr}"([^>]*?)(?:/>|>[\\s\\S]*?</c>)`);
+  const body = isNum ? `<v>${value}</v>` : `t="inlineStr"><is><t xml:space="preserve">${escXml(value)}</t></is>`;
+  if (re.test(xml)) {
+    return xml.replace(re, (_m, attrs) => {
+      const s = (String(attrs).match(/\ss="\d+"/) || [""])[0];
+      return isNum ? `<c r="${addr}"${s}>${body}</c>` : `<c r="${addr}"${s} ${body}</c>`;
+    });
+  }
+  return xml; // cell not present — skip rather than risk a malformed insert
+}
+
+export interface WorkbookMeta { projectName?: string; }
+
+/** Clone the styled template and populate its BL / Proposed sheets (+ a few
+    Project Info inputs). Returns a ready-to-download .xlsx Blob. */
+export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateConfig, meta: WorkbookMeta = {}): Promise<Blob> {
   const zip = await JSZip.loadAsync(await loadTemplate());
   const paths = await sheetPathMap(zip);
-  const blName = Object.keys(paths).find((n) => /^bl/i.test(n));
-  const propName = Object.keys(paths).find((n) => /proposed/i.test(n));
+  const blName = Object.keys(paths).find((n) => /^bl\s*data/i.test(n)) || Object.keys(paths).find((n) => /^bl/i.test(n));
+  const propName = Object.keys(paths).find((n) => /^proposed\s*data/i.test(n)) || Object.keys(paths).find((n) => /proposed/i.test(n));
   if (blName) zip.file(paths[blName], injectSheet(await zip.file(paths[blName])!.async("string"), blRows, cfg));
   if (propName) zip.file(paths[propName], injectSheet(await zip.file(paths[propName])!.async("string"), propRows, cfg));
+
+  // Project Info metadata — overwrite the template's stale sample values with the
+  // current project's. (D4 name · D5 ASHRAE climate zone · D7 conditioned area)
+  const piName = Object.keys(paths).find((n) => /project\s*info/i.test(n));
+  if (piName) {
+    const sample = propRows[0] || blRows[0];
+    let pi = await zip.file(paths[piName])!.async("string");
+    if (meta.projectName) pi = setSheetCellValue(pi, "D4", meta.projectName);
+    const cz = sample?.climate_zone;
+    if (cz != null && cz !== "") pi = setSheetCellValue(pi, "D5", String(cz));
+    const area = sample?.conditioned_floor_area || sample?.total_floor_area;
+    if (typeof area === "number" && area > 0) pi = setSheetCellValue(pi, "D7", area);
+    zip.file(paths[piName], pi);
+  }
+
+  // Force Excel to recompute every formula (and thus refresh the SiteE/SourceE/
+  // Carbon/Cost charts and Report/Input-Summary tables) the moment it opens.
+  const wbFile = zip.file("xl/workbook.xml");
+  if (wbFile) {
+    let wbXml = await wbFile.async("string");
+    wbXml = /<calcPr[^>]*\/>/.test(wbXml)
+      ? wbXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="191028" fullCalcOnLoad="1"/>')
+      : wbXml.replace("</workbook>", '<calcPr calcId="191028" fullCalcOnLoad="1"/></workbook>');
+    zip.file("xl/workbook.xml", wbXml);
+  }
+
   return zip.generateAsync({
     type: "blob",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

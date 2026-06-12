@@ -37,7 +37,7 @@ export function renderMepc(root: HTMLElement) {
       "Load the blank calculator <b>.xlsm</b> template + the baseline &amp; proposed <b>.SIM</b> (required).",
       "Optionally add 90/180/270° rotation runs, the proposed <b>.INP</b>, and a QA “Results Path” export.",
       "Click <b>Process files</b> to parse, then <b>Download copy-paste tables</b> (the reliable output).",
-      "Or try <b>Fill official .xlsm</b> for a best-effort direct fill (every written cell is highlighted yellow).",
+      "Or try <b>Fill official .xlsm</b> for a best-effort direct fill (written cells keep the template's formatting).",
     ],
     [
       "5 clean sheets — Performance Outputs (4 rotations), General Info, Fenestration, Opaque, Lighting.",
