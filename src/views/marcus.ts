@@ -320,7 +320,25 @@ function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
   });
 }
 
+/** Average proposed rotations into a single final proposed row. Numeric fields
+    that every row supplies are averaged; text/identity fields keep the first. */
+function averageRows(rows: Row[]): Row {
+  if (rows.length <= 1) return rows[0];
+  const out: Row = { ...rows[0] };
+  const keys = new Set<string>(); rows.forEach((r) => Object.keys(r).forEach((k) => keys.add(k)));
+  for (const k of keys) {
+    if (k.startsWith("_")) continue;
+    const nums = rows.map((r) => r[k]).filter((v) => typeof v === "number" && isFinite(v));
+    if (nums.length === rows.length) out[k] = nums.reduce((a, b) => a + b, 0) / nums.length;
+  }
+  out._cat = "proposed"; out._rot = 0;
+  out.option_name = rows[0].option_name || "Proposed Design";
+  return out;
+}
+
 async function finishParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[]) {
+  // proposed rotations → one averaged final proposed
+  if (prop.length > 1) { logLine(`<span class="dim">› averaged ${prop.length} proposed rotations → 1 final proposed</span>`); prop = [averageRows(prop)]; }
   store.blRows = bl; store.propRows = prop;
   logLine(`<span class="ok">✓ Assigned ${bl.length} baseline · ${prop.length} proposed</span>`);
   const summary = computeSummary(bl, prop);
