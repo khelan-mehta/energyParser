@@ -60,7 +60,7 @@ async function sheetPathMap(zip: JSZip): Promise<Record<string, string>> {
 /* Rebuild a worksheet's <sheetData> by keeping the header row (r="1")
    verbatim and cloning the template's first data row (r="2") — with its
    per-column style indices — once per data row, injecting values. */
-function injectSheet(xml: string, rows: Row[], cfg: RateConfig): string {
+function injectSheet(xml: string, rows: (Row | null)[], cfg: RateConfig): string {
   const sd = xml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
   if (!sd) return xml;
   const headerRow = (sd[1].match(/<row r="1"[\s\S]*?<\/row>/) || [""])[0];
@@ -81,15 +81,18 @@ function injectSheet(xml: string, rows: Row[], cfg: RateConfig): string {
   const dataRows: string[] = [];
   for (let i = 0; i < rows.length; i++) {
     const R = i + 2; // header is row 1; data starts at row 2
-    const merged = enrichRow(rows[i], cfg);
+    // a null slot → a blank (but styled) row, so e.g. LEED@row2 / Code@row6 line
+    // up with the workbook's formulas even when some rotations are missing.
+    const merged = rows[i] ? enrichRow(rows[i] as Row, cfg) : null;
     let cs = "";
     for (let c = 0; c <= lastCol; c++) {
       const col = colLetter(c);
       const attrs = protoAttrByCol[col] || "";
+      const ref = `${col}${R}`;
+      if (!merged) { cs += `<c r="${ref}"${attrs}/>`; continue; }
       const fmt = COLUMNS[c][2];
       let v: any = merged[COLUMNS[c][1]];
       if (v === undefined || v === null) v = fmt === "@" ? "" : 0;
-      const ref = `${col}${R}`;
       if (typeof v === "number" && isFinite(v)) cs += `<c r="${ref}"${attrs}><v>${v}</v></c>`;
       else if (v === "") cs += `<c r="${ref}"${attrs}/>`;
       else cs += `<c r="${ref}"${attrs} t="inlineStr"><is><t xml:space="preserve">${escXml(v)}</t></is></c>`;
@@ -122,6 +125,25 @@ function setSheetCellValue(xml: string, addr: string, value: string | number): s
 
 export interface WorkbookMeta { projectName?: string; }
 
+/* Order the baseline rows into the workbook's fixed 8-row layout when the rows
+   are human-classified (_cat = leed|code, _rot = 0|90|180|270):
+     rows 2-5  = LEED   rotations 0 / 90 / 180 / 270
+     rows 6-9  = Code    rotations 0 / 90 / 180 / 270
+   Empty slots become blank rows. If the rows aren't classified, fall back to
+   their natural order (older projects / the non-project pipeline). */
+const ROT_INDEX: Record<number, number> = { 0: 0, 90: 1, 180: 2, 270: 3 };
+function baselineLayout(blRows: Row[]): (Row | null)[] {
+  if (!blRows.some((r) => r && r._cat)) return blRows;
+  const slots: (Row | null)[] = new Array(8).fill(null);
+  for (const r of blRows) {
+    const block = r._cat === "code" ? 4 : 0;
+    let idx = block + (ROT_INDEX[r._rot as number] ?? 0);
+    if (slots[idx]) { idx = block; while (idx < block + 4 && slots[idx]) idx++; } // collision → next free in block
+    if (idx < block + 4) slots[idx] = r;
+  }
+  return slots;
+}
+
 /** Clone the styled template and populate its BL / Proposed sheets (+ a few
     Project Info inputs). Returns a ready-to-download .xlsx Blob. */
 export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateConfig, meta: WorkbookMeta = {}): Promise<Blob> {
@@ -129,7 +151,7 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
   const paths = await sheetPathMap(zip);
   const blName = Object.keys(paths).find((n) => /^bl\s*data/i.test(n)) || Object.keys(paths).find((n) => /^bl/i.test(n));
   const propName = Object.keys(paths).find((n) => /^proposed\s*data/i.test(n)) || Object.keys(paths).find((n) => /proposed/i.test(n));
-  if (blName) zip.file(paths[blName], injectSheet(await zip.file(paths[blName])!.async("string"), blRows, cfg));
+  if (blName) zip.file(paths[blName], injectSheet(await zip.file(paths[blName])!.async("string"), baselineLayout(blRows), cfg));
   if (propName) zip.file(paths[propName], injectSheet(await zip.file(paths[propName])!.async("string"), propRows, cfg));
 
   // Project Info — overwrite the template's stale sample inputs with the current

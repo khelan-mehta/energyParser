@@ -10,7 +10,7 @@ import { ICON } from "../ui/icons";
 import { SIMParser, Row } from "../engine/sim";
 import { INPParser } from "../engine/inp";
 import { loadTracePages } from "../engine/trace-load";
-import { parseTrace, traceToRows } from "../engine/trace";
+import { parseTrace, traceAllRows } from "../engine/trace";
 import { enrichRow } from "../engine/enrich";
 import { buildWorkbook, downloadWorkbook } from "../engine/workbook";
 import { COLUMNS } from "../engine/columns";
@@ -214,16 +214,18 @@ function uploadZone(root: HTMLElement, p: Project, role: string, label: string, 
 }
 
 /* ---------- parse ---------- */
+type ParsedModel = { name: string; row: Row };
+
 async function parseProject(root: HTMLElement, p: Project) {
   logClear();
   const prog = document.getElementById("mk-prog")!; const bar = document.getElementById("mk-prog-b") as HTMLElement;
   const pl = document.getElementById("mk-prog-l")!; const pp = document.getElementById("mk-prog-p")!;
   prog.classList.remove("hide");
   try {
-    let bl: Row[] = [], prop: Row[] = [];
+    let models: ParsedModel[] = [];
     if (p.modelType === "equest") {
       pl.textContent = "Parsing eQUEST models…";
-      bl = await parseEquestSide(p, "baseline"); prop = await parseEquestSide(p, "proposed");
+      models = await parseEquestModels(p);
       bar.style.width = "100%"; pp.textContent = "100%";
     } else if (p.modelType === "trace") {
       const pdf = p.files.find((f) => f.ext === ".pdf");
@@ -231,39 +233,99 @@ async function parseProject(root: HTMLElement, p: Project) {
       const buf = await Projects.fileBlob(p.id, pdf.id);
       const pages = await loadTracePages(buf, (d, t) => { const x = Math.round((d / t) * 100); bar.style.width = x + "%"; pp.textContent = x + "%"; pl.textContent = `Reading page ${d}/${t}…`; });
       const report = parseTrace(pages, pdf.name); store.trace = report;
-      const r = traceToRows(report); bl = r.blRows; prop = r.propRows;
+      models = traceAllRows(report).map((r) => ({ name: r.option_name || "Alternative", row: r }));
     } else throw new Error("IES-VE parser is under development");
 
-    if (!bl.length && !prop.length) throw new Error("no models parsed — check the uploaded files");
-    store.blRows = bl; store.propRows = prop;
-    logLine(`<span class="ok">✓ Parsed ${bl.length + prop.length} model(s)</span>`);
-    // persist parsed payload + summary
-    const summary = computeSummary(bl, prop);
-    await Projects.update(p.id, { parsed: { bl, prop, summary }, modelType: p.modelType });
-    p.parsed = { bl, prop, summary } as any;
-    emit(); toast(`✓ Parsed ${bl.length + prop.length} model(s)`);
-    rerender(root);
-    setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+    if (!models.length) throw new Error("no models parsed — check the uploaded files");
+    prog.classList.add("hide");
+    logLine(`<span class="ok">✓ Parsed ${models.length} model(s) — assign each below</span>`); paintLog();
+    classifyModal(root, p, models);            // human-in-the-loop assignment
   } catch (e: any) {
     logLine(`<span class="err">✗ ${esc(e.message)}</span>`);
     toast("Parse failed — " + e.message); paintLog();
   }
 }
-async function parseEquestSide(p: Project, role: "baseline" | "proposed"): Promise<Row[]> {
-  const files = p.files.filter((f) => f.role === role);
-  const sims = files.filter((f) => f.ext === ".sim");
-  const inps = files.filter((f) => f.ext === ".inp");
-  const rows: Row[] = [];
-  for (let i = 0; i < sims.length; i++) {
-    const text = await Projects.fileText(p.id, sims[i].id);
-    const r = new SIMParser(text, sims[i].name).parse();
-    r.option_name = sims.length > 1 ? `${p.name} ${role} ${i + 1}` : `${p.name} ${role}`;
-    r.results_path = sims[i].name;
-    logLine(`<span class="dim">› ${role} SIM:</span> <span class="info">${esc(sims[i].name)}</span>`);
-    if (inps[i]) { try { const it = await Projects.fileText(p.id, inps[i].id); Object.assign(r, new INPParser(it, inps[i].name).parse()); } catch { /* ignore */ } }
-    rows.push(r);
+
+/** Parse every eQUEST .SIM (pairing a matching .inp) into a flat model list. */
+async function parseEquestModels(p: Project): Promise<ParsedModel[]> {
+  const sims = p.files.filter((f) => f.ext === ".sim");
+  const inps = p.files.filter((f) => f.ext === ".inp");
+  const base = (n: string) => n.replace(/\.[^.]+$/, "").toLowerCase();
+  const models: ParsedModel[] = [];
+  for (const sim of sims) {
+    const text = await Projects.fileText(p.id, sim.id);
+    const r = new SIMParser(text, sim.name).parse();
+    r.option_name = sim.name.replace(/\.[Ss][Ii][Mm].*$/, "").trim() || sim.name;
+    r.results_path = sim.name;
+    logLine(`<span class="dim">› SIM:</span> <span class="info">${esc(sim.name)}</span>`);
+    const inp = inps.find((i) => base(i.name) === base(sim.name)) || inps.find((i) => i.role === sim.role);
+    if (inp) { try { Object.assign(r, new INPParser(await Projects.fileText(p.id, inp.id), inp.name).parse()); } catch { /* ignore */ } }
+    models.push({ name: sim.name, row: r });
   }
-  return rows;
+  return models;
+}
+
+/** Best-effort category + rotation guess from a model/file name (user can override). */
+function guessClass(name: string): { cat: "leed" | "code" | "proposed"; rot: number } {
+  const n = name.toLowerCase();
+  let cat: "leed" | "code" | "proposed" = "proposed";
+  if (/proposed/.test(n)) cat = "proposed";
+  else if (/leed/.test(n)) cat = "leed";
+  else if (/code|compliance|appx|90\.1/.test(n)) cat = "code";
+  else if (/baseline/.test(n)) cat = "leed";
+  const m = n.match(/(?:^|[_\s\-(])(0|90|180|270)(?:[_\s\-)°]|deg|$)/);
+  return { cat, rot: m ? +m[1] : 0 };
+}
+
+/* ---------- classification modal (human in the loop) ---------- */
+function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
+  const rowHtml = (m: ParsedModel, i: number) => {
+    const g = guessClass(m.name);
+    const rot = `<select class="unit-pick cm-rot" data-i="${i}" ${g.cat === "proposed" ? "disabled" : ""}>${[0, 90, 180, 270].map((d) => `<option value="${d}" ${d === g.rot ? "selected" : ""}>${d}°</option>`).join("")}</select>`;
+    return `<div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;align-items:center;margin-bottom:9px">
+      <div style="font-size:12.5px;font-weight:600;word-break:break-word">${esc(m.name)}</div>
+      <select class="unit-pick cm-cat" data-i="${i}">
+        <option value="leed" ${g.cat === "leed" ? "selected" : ""}>LEED Baseline</option>
+        <option value="code" ${g.cat === "code" ? "selected" : ""}>Code Baseline</option>
+        <option value="proposed" ${g.cat === "proposed" ? "selected" : ""}>Proposed</option>
+      </select>${rot}</div>`;
+  };
+  const overlay = h(`
+    <div class="modal-overlay"><div class="modal" style="max-width:660px"><div class="modal-hd"><h3>Assign models</h3><span class="x">${ICON.close("x")}</span></div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Tell us what each parsed model is. <b>LEED</b> rotations fill the first 4 rows of <b>BL Data</b> (0°/90°/180°/270°), <b>Code</b> rotations the next 4; <b>Proposed</b> cases fill the <b>Proposed Data</b> sheet in order.</p>
+        <div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:8px"><div>Model</div><div>Category</div><div>Rotation</div></div>
+        ${models.map(rowHtml).join("")}
+        <button class="btn btn-primary" id="cm-go" style="width:100%;justify-content:center;margin-top:16px">${ICON.bolt()} Populate</button>
+      </div></div></div>`);
+  document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+  const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); };
+  overlay.querySelector(".x")!.addEventListener("click", close);
+  overlay.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((sel) => sel.addEventListener("change", () => {
+    (overlay.querySelector(`.cm-rot[data-i="${sel.dataset.i}"]`) as HTMLSelectElement).disabled = sel.value === "proposed";
+  }));
+  overlay.querySelector("#cm-go")!.addEventListener("click", () => {
+    const bl: Row[] = [], prop: Row[] = [];
+    models.forEach((m, i) => {
+      const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
+      const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
+      m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
+      (cat === "proposed" ? prop : bl).push(m.row);
+    });
+    close();
+    finishParse(root, p, bl, prop);
+  });
+}
+
+async function finishParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[]) {
+  store.blRows = bl; store.propRows = prop;
+  logLine(`<span class="ok">✓ Assigned ${bl.length} baseline · ${prop.length} proposed</span>`);
+  const summary = computeSummary(bl, prop);
+  await Projects.update(p.id, { parsed: { bl, prop, summary }, modelType: p.modelType });
+  p.parsed = { bl, prop, summary } as any;
+  emit(); toast(`✓ Populated ${bl.length + prop.length} model(s)`);
+  rerender(root);
+  setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
 }
 function computeSummary(bl: Row[], prop: Row[]) {
   const rows = [...bl, ...prop].map((r) => enrichRow(r, store.rates));

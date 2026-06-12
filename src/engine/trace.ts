@@ -422,6 +422,16 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
   return row;
 }
 
+/** All TRACE alternatives as rows (one per alternative, unsplit) — each row's
+    option_name is the alternative name, for human classification. */
+export function traceAllRows(r: TraceReport): Row[] {
+  return r.siteConsumption.map((site, i) => {
+    const row = siteToRow(r, site, i);
+    row.option_name = site.alternative || `Alternative ${i + 1}`;
+    return row;
+  });
+}
+
 /** Split TRACE alternatives into baseline vs proposed rows (same shape as SIM). */
 export function traceToRows(r: TraceReport): { blRows: Row[]; propRows: Row[] } {
   const blRows: Row[] = [], propRows: Row[] = [];
