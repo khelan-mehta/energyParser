@@ -132,8 +132,11 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
   if (blName) zip.file(paths[blName], injectSheet(await zip.file(paths[blName])!.async("string"), blRows, cfg));
   if (propName) zip.file(paths[propName], injectSheet(await zip.file(paths[propName])!.async("string"), propRows, cfg));
 
-  // Project Info metadata — overwrite the template's stale sample values with the
-  // current project's. (D4 name · D5 ASHRAE climate zone · D7 conditioned area)
+  // Project Info — overwrite the template's stale sample inputs with the current
+  // project's, so the whole calc chain (cost/carbon savings → LEED summary) is
+  // driven by THIS project. Metadata: D4 name · D5 climate zone · D7 cond. area.
+  // Prerequisite rate inputs (the "Enter Flat Rate" cells the summary uses):
+  // I29 electricity $/kWh · J29 gas $/therm · I22 electricity kg CO2e/kWh.
   const piName = Object.keys(paths).find((n) => /project\s*info/i.test(n));
   if (piName) {
     const sample = propRows[0] || blRows[0];
@@ -143,6 +146,9 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
     if (cz != null && cz !== "") pi = setSheetCellValue(pi, "D5", String(cz));
     const area = sample?.conditioned_floor_area || sample?.total_floor_area;
     if (typeof area === "number" && area > 0) pi = setSheetCellValue(pi, "D7", area);
+    if (cfg.elec_per_kwh != null && cfg.elec_per_kwh > 0) pi = setSheetCellValue(pi, "I29", cfg.elec_per_kwh);
+    if (cfg.gas_per_therm != null && cfg.gas_per_therm > 0) pi = setSheetCellValue(pi, "J29", cfg.gas_per_therm);
+    if (cfg.elec_carbon_per_kwh != null && cfg.elec_carbon_per_kwh > 0) pi = setSheetCellValue(pi, "I22", cfg.elec_carbon_per_kwh);
     zip.file(paths[piName], pi);
   }
 
