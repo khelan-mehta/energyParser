@@ -10,7 +10,7 @@ import { ICON } from "../ui/icons";
 import { SIMParser, Row } from "../engine/sim";
 import { INPParser } from "../engine/inp";
 import { loadTracePages } from "../engine/trace-load";
-import { parseTrace, traceAllRows } from "../engine/trace";
+import { parseTrace, traceModels } from "../engine/trace";
 import { enrichRow } from "../engine/enrich";
 import { buildWorkbook, downloadWorkbook } from "../engine/workbook";
 import { COLUMNS } from "../engine/columns";
@@ -214,7 +214,7 @@ function uploadZone(root: HTMLElement, p: Project, role: string, label: string, 
 }
 
 /* ---------- parse ---------- */
-type ParsedModel = { name: string; row: Row };
+type ParsedModel = { name: string; row: Row; cat?: "leed" | "code" | "proposed"; rot?: number };
 
 async function parseProject(root: HTMLElement, p: Project) {
   logClear();
@@ -233,7 +233,8 @@ async function parseProject(root: HTMLElement, p: Project) {
       const buf = await Projects.fileBlob(p.id, pdf.id);
       const pages = await loadTracePages(buf, (d, t) => { const x = Math.round((d / t) * 100); bar.style.width = x + "%"; pp.textContent = x + "%"; pl.textContent = `Reading page ${d}/${t}…`; });
       const report = parseTrace(pages, pdf.name); store.trace = report;
-      models = traceAllRows(report).map((r) => ({ name: r.option_name || "Alternative", row: r }));
+      // Section 1.6 supplies the baseline's 0/90/180/270 rotations — expand & pre-tag them
+      models = traceModels(report).map((m) => ({ name: m.name, row: m.row, cat: m.cat, rot: m.rot }));
     } else throw new Error("IES-VE parser is under development");
 
     if (!models.length) throw new Error("no models parsed — check the uploaded files");
@@ -281,14 +282,16 @@ function guessClass(name: string): { cat: "leed" | "code" | "proposed"; rot: num
 function classifyModal(root: HTMLElement, p: Project, models: ParsedModel[]) {
   const rowHtml = (m: ParsedModel, i: number) => {
     const g = guessClass(m.name);
-    const rot = `<select class="unit-pick cm-rot" data-i="${i}" ${g.cat === "proposed" ? "disabled" : ""}>${[0, 90, 180, 270].map((d) => `<option value="${d}" ${d === g.rot ? "selected" : ""}>${d}°</option>`).join("")}</select>`;
+    const cat = m.cat ?? g.cat;          // engine-supplied (e.g. TRACE §1.6 rotations) wins over the name guess
+    const rot = m.rot ?? g.rot;
+    const rotSel = `<select class="unit-pick cm-rot" data-i="${i}" ${cat === "proposed" ? "disabled" : ""}>${[0, 90, 180, 270].map((d) => `<option value="${d}" ${d === rot ? "selected" : ""}>${d}°</option>`).join("")}</select>`;
     return `<div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;align-items:center;margin-bottom:9px">
       <div style="font-size:12.5px;font-weight:600;word-break:break-word">${esc(m.name)}</div>
       <select class="unit-pick cm-cat" data-i="${i}">
-        <option value="leed" ${g.cat === "leed" ? "selected" : ""}>LEED Baseline</option>
-        <option value="code" ${g.cat === "code" ? "selected" : ""}>Code Baseline</option>
-        <option value="proposed" ${g.cat === "proposed" ? "selected" : ""}>Proposed</option>
-      </select>${rot}</div>`;
+        <option value="leed" ${cat === "leed" ? "selected" : ""}>LEED Baseline</option>
+        <option value="code" ${cat === "code" ? "selected" : ""}>Code Baseline</option>
+        <option value="proposed" ${cat === "proposed" ? "selected" : ""}>Proposed</option>
+      </select>${rotSel}</div>`;
   };
   const overlay = h(`
     <div class="modal-overlay"><div class="modal" style="max-width:660px"><div class="modal-hd"><h3>Assign models</h3><span class="x">${ICON.close("x")}</span></div>

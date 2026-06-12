@@ -52,9 +52,19 @@ export interface ProjectSummary {
   unmetCooling: number; unmetHeating: number;
 }
 
+/** One rotation of the PRM baseline (Section 1.6, Table EAp2-4). Field names
+    match the Row schema so they can be spread straight onto a baseline row. */
+export interface BaselineRotation {
+  rotation: number;
+  total_energy_kbtu: number; electricity_kbtu: number; gas_kbtu: number;
+  clg_elec_kbtu: number; fans_kbtu: number; htg_elec_kbtu: number; htg_gas_kbtu: number;
+  int_lighting_kbtu: number; ext_lighting_kbtu: number; int_equip_kbtu: number; ext_equip_kbtu: number;
+}
+
 export interface TraceReport {
   fileName: string; pageCount: number; alternatives: string[];
   general: TraceGeneral | null;
+  baselineRotations: BaselineRotation[] | null;
   annualEnergy: AnnualEnergyRow[];
   siteConsumption: SiteConsumption[];
   lighting: LightingDaylight[];
@@ -91,7 +101,7 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   const warnings: string[] = [];
   const report: TraceReport = {
     fileName, pageCount: pages.length, alternatives: [],
-    general: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
+    general: null, baselineRotations: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
     monthlyElectricity: null, unmetHeatingHours: null, warnings,
   };
 
@@ -124,6 +134,10 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
     report.projectSummary.push(parseProjectSummary(p.text, p.alt || altOf(p.text)));
   }
   if (!report.projectSummary.length) warnings.push("Project Summary not found.");
+
+  // ---- Section 1.6 PRM Compliance: the baseline's 4 rotations (0/90/180/270) ----
+  const s16 = pages.find((p) => /Table EAp2-4 - Baseline Performance/.test(p.text));
+  if (s16) report.baselineRotations = parseBaselineRotations(s16.text);
 
   // ---- Economic ----
   const ec = pages.find((p) => p.text.startsWith("Economic Alternative Comparison"));
@@ -420,6 +434,67 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
     if (ps.unmetHeating) row.unmet_heating_hrs = ps.unmetHeating;
   }
   return row;
+}
+
+/** Parse Section 1.6 (Table EAp2-4 Baseline Performance) → the baseline's 4
+    rotations, by end use. Use values are kWh (×3.412→kBtu) or therms (×100). */
+function parseBaselineRotations(t: string): BaselineRotation[] | null {
+  if (!/Table EAp2-4 - Baseline Performance/.test(t)) return null;
+  const labels = ["Cooling", "Exterior Equipment", "Exterior Lighting", "Fans", "Heating", "Interior Equipment", "Interior Lighting"];
+  const bounds: { l: string; i: number }[] = [];
+  labels.forEach((l) => { const i = t.indexOf(l + " --"); if (i >= 0) bounds.push({ l, i }); });
+  bounds.sort((a, b) => a.i - b.i);
+  const totI = t.indexOf("Total Energy Use (MMBtu");
+  const elec: Record<string, number[]> = {}, gas: Record<string, number[]> = {};
+  bounds.forEach((b, k) => {
+    const s = t.slice(b.i, k + 1 < bounds.length ? bounds[k + 1].i : totI);
+    const em = s.match(/Electricity Use kWh\s+([\d.\s]+?)\s+Demand/);
+    if (em) elec[b.l] = em[1].trim().split(/\s+/).map(Number).slice(0, 4);
+    const gm = s.match(/Gas Use therms\s+([\d.\s]+?)\s+Demand/);
+    if (gm) gas[b.l] = gm[1].trim().split(/\s+/).map(Number).slice(0, 4);
+  });
+  const tm = t.match(/Total Energy Use \(MMBtu\/year\)\s+([\d.\s]+?)\s+Annual/);
+  const totals = tm ? tm[1].trim().split(/\s+/).map(Number).slice(0, 4) : null;
+  if (!totals || totals.length < 4) return null;
+  const E = (l: string, r: number) => (elec[l] && elec[l][r] != null) ? elec[l][r] : 0;
+  const G = (l: string, r: number) => (gas[l] && gas[l][r] != null) ? gas[l][r] : 0;
+  return [0, 90, 180, 270].map((rotation, r) => ({
+    rotation,
+    total_energy_kbtu: totals[r] * MMBTU_TO_KBTU,
+    electricity_kbtu: labels.reduce((a, l) => a + E(l, r), 0) * KWH_TO_KBTU,
+    gas_kbtu: G("Heating", r) * 100,
+    clg_elec_kbtu: E("Cooling", r) * KWH_TO_KBTU, fans_kbtu: E("Fans", r) * KWH_TO_KBTU,
+    htg_elec_kbtu: E("Heating", r) * KWH_TO_KBTU, htg_gas_kbtu: G("Heating", r) * 100,
+    int_lighting_kbtu: E("Interior Lighting", r) * KWH_TO_KBTU, ext_lighting_kbtu: E("Exterior Lighting", r) * KWH_TO_KBTU,
+    int_equip_kbtu: E("Interior Equipment", r) * KWH_TO_KBTU, ext_equip_kbtu: E("Exterior Equipment", r) * KWH_TO_KBTU,
+  }));
+}
+
+export interface TraceModel { name: string; row: Row; cat: "leed" | "code" | "proposed"; rot: number; }
+
+/** Build the classification model list. When Section 1.6 supplied the baseline's
+    rotations, the (LEED/PRM) baseline is expanded into 4 rotation rows pre-tagged
+    leed + 0/90/180/270; other alternatives map straight through. */
+export function traceModels(report: TraceReport): TraceModel[] {
+  const out: TraceModel[] = [];
+  for (const row of traceAllRows(report)) {
+    const name = String(row.option_name || "");
+    const proposed = /proposed/i.test(name);
+    const code = !proposed && /code/i.test(name);
+    if (!proposed && !code && report.baselineRotations && report.baselineRotations.length) {
+      const area = row.conditioned_floor_area || row.total_floor_area || 0;
+      for (const rot of report.baselineRotations) {
+        const { rotation, ...over } = rot;
+        const r: Row = { ...row, ...over };
+        if (area > 0) r.eui_kbtu_ft2 = Math.round((r.total_energy_kbtu / area) * 100) / 100;
+        r.option_name = `${name} ${rotation}°`;
+        out.push({ name: r.option_name, row: r, cat: "leed", rot: rotation });
+      }
+    } else {
+      out.push({ name, row, cat: proposed ? "proposed" : code ? "code" : "leed", rot: 0 });
+    }
+  }
+  return out;
 }
 
 /** All TRACE alternatives as rows (one per alternative, unsplit) — each row's
