@@ -9,7 +9,7 @@ export interface Project {
   files: ProjectFile[]; parsed: any | null; rates: any | null; ratesName: string;
   createdAt: number; updatedAt: number; hasParsed?: boolean; summary?: any;
 }
-export interface RateSet { id: string; ownerId: string; ownerName: string; name: string; config: any; shared: boolean; createdAt: number; }
+export interface RateSet { id: string; ownerId: string; ownerName: string; name: string; config: any; shared: boolean; createdAt: number; updatedAt?: number; }
 export interface RateSnapshot {
   id: string; ownerId: string; ts: number; location: string; state: string;
   elec: number | null; elecSrc: string; gas: number | null; gasSrc: string;
@@ -76,6 +76,7 @@ export const Projects = {
 export const Rates = {
   list: () => api("/rates"),
   save: (name: string, config: any, shared = false) => api("/rates", { method: "POST", body: JSON.stringify({ name, config, shared }) }),
+  update: (id: string, patch: { name?: string; config?: any; shared?: boolean }) => api(`/rates/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   remove: (id: string) => api(`/rates/${id}`, { method: "DELETE" }),
 };
 

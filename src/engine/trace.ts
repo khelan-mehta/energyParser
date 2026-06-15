@@ -68,11 +68,20 @@ export interface TraceUtilityRates {
   description: string;
 }
 
+/** Envelope Summary — area-weighted opaque U-Factors (with film) + glazing, per alternative. */
+export interface EnvelopeData {
+  wallU: number; roofU: number; floorU: number; slabU: number;
+  glassU: number; glassShgc: number; glassVlt: number;
+}
+
 export interface TraceReport {
   fileName: string; pageCount: number; alternatives: string[];
   general: TraceGeneral | null;
   baselineRotations: BaselineRotation[] | null;
   utilityRates: TraceUtilityRates | null;
+  envelope: Record<string, EnvelopeData>;
+  energyCostBaseline: number; energyCostProposed: number;
+  baselineFanKw: number;
   annualEnergy: AnnualEnergyRow[];
   siteConsumption: SiteConsumption[];
   lighting: LightingDaylight[];
@@ -109,7 +118,8 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   const warnings: string[] = [];
   const report: TraceReport = {
     fileName, pageCount: pages.length, alternatives: [],
-    general: null, baselineRotations: null, utilityRates: null, annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
+    general: null, baselineRotations: null, utilityRates: null, envelope: {}, energyCostBaseline: 0, energyCostProposed: 0, baselineFanKw: 0,
+    annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
     monthlyElectricity: null, unmetHeatingHours: null, warnings,
   };
 
@@ -150,6 +160,22 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   // ---- Section 1.5 Energy Type Summary (Table EAp2-3): the model's utility rates ----
   const s15 = pages.find((p) => /Table EAp2-3|Utility Rate Description/.test(p.text));
   if (s15) report.utilityRates = parseUtilityRates(s15.text);
+
+  // ---- Envelope Summary (per alternative): opaque U-Factors + glazing ----
+  report.envelope = parseEnvelope(pages);
+
+  // ---- Table EAp2-7 Energy Cost Summary: model-reported total energy cost ----
+  const c7 = pages.find((p) => p.text.includes("Table EAp2-7"));
+  if (c7) {
+    const m = c7.text.match(/Table EAp2-7[\s\S]*?Total\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+Proposed building/);
+    if (m) { report.energyCostBaseline = +m[2].replace(/,/g, ""); report.energyCostProposed = +m[3].replace(/,/g, ""); }
+  }
+
+  // ---- Baseline PRM Fan Power: sum of allowed fan power across systems ----
+  let fanKw = 0;
+  for (const p of pages) if (p.text.includes("Baseline PRM Fan Power"))
+    for (const m of p.text.matchAll(/Allowed Fan Power\s*:?\s*([\d.]+)\s*kW/g)) fanKw += +m[1];
+  report.baselineFanKw = Math.round(fanKw * 100) / 100;
 
   // ---- Economic ----
   const ec = pages.find((p) => p.text.startsWith("Economic Alternative Comparison"));
@@ -406,18 +432,16 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
     row.above_ground_west_wall = light.wallArea.west;
     row.total_window_area = light.windowOpening.total;
     row.building_wwr = light.wwrGross.total;
-    row.north_wwr_actual = light.wwrGross.north;
-    row.east_wwr_actual = light.wwrGross.east;
-    row.south_wwr_actual = light.wwrGross.south;
-    row.west_wwr_actual = light.wwrGross.west;
+    // WWR "actual" = window opening area ÷ gross wall area per facade (fall back to gross WWR).
+    const wwrAct = (open: number, wall: number, gross: number) => (wall > 0 ? open / wall * 100 : gross);
+    row.north_wwr_actual = wwrAct(light.windowOpening.north, light.wallArea.north, light.wwrGross.north);
+    row.east_wwr_actual = wwrAct(light.windowOpening.east, light.wallArea.east, light.wwrGross.east);
+    row.south_wwr_actual = wwrAct(light.windowOpening.south, light.wallArea.south, light.wwrGross.south);
+    row.west_wwr_actual = wwrAct(light.windowOpening.west, light.wallArea.west, light.wwrGross.west);
     row.gross_roof_area = light.grossRoofArea;
     row.skylight_area = light.skylightArea;
     row.skylight_ratio = light.skylightRatio;
-    if (gfa > 0) {
-      row.wall_to_floor_ratio = light.wallArea.total / gfa;
-      row.roof_to_floor_ratio = light.grossRoofArea / gfa;
-      row.envelope_to_floor_ratio = row.wall_to_floor_ratio + row.roof_to_floor_ratio;
-    }
+    // wall/roof-to-floor ratios are computed below, against CONDITIONED area.
   }
 
   // Project Summary — areas, densities, airflows, peaks, unmet hours
@@ -445,7 +469,47 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
     if (ps.unmetCooling) row.unmet_cooling_hrs = ps.unmetCooling;
     if (ps.unmetHeating) row.unmet_heating_hrs = ps.unmetHeating;
   }
+
+  // ---- Geometry ratios — against CONDITIONED floor area (per the field mapping) ----
+  const condArea = row.conditioned_floor_area || gfa || 0;
+  if (condArea > 0) {
+    if (row.gross_wall_area) row.wall_to_floor_ratio = row.gross_wall_area / condArea;
+    if (row.gross_roof_area) row.roof_to_floor_ratio = row.gross_roof_area / condArea;
+    row.envelope_to_floor_ratio = (row.wall_to_floor_ratio || 0) + (row.roof_to_floor_ratio || 0);
+  }
+
+  // ---- Envelope Summary — opaque U-Factors + glazing (Envelope Summary report) ----
+  const isBaseline = /baseline|code|ashrae\s*90\.1/i.test(site.alternative || "");
+  const env = pickEnvelope(r.envelope, site.alternative, isBaseline);
+  if (env) {
+    if (env.wallU) row.wall_u_value = env.wallU;
+    if (env.roofU) row.roof_u_value = env.roofU;
+    if (env.floorU) row.exposed_floor_u_value = env.floorU;
+    if (env.slabU) row.slab_u_value = env.slabU;
+    if (env.glassU) row.glass_u_value = env.glassU;
+    if (env.glassShgc) row.glass_shgc = env.glassShgc;
+    if (env.glassVlt) row.glass_vlt = env.glassVlt;
+  }
+
+  // ---- Model-reported total energy cost (Table EAp2-7) ----
+  const modelCost = isBaseline ? r.energyCostBaseline : r.energyCostProposed;
+  if (modelCost > 0) row.model_total_cost = modelCost;
+
+  // ---- Baseline fan power (Baseline PRM Fan Power) ----
+  if (isBaseline && r.baselineFanKw > 0) row.total_fan_kw = r.baselineFanKw;
+
   return row;
+}
+
+/** Pick the envelope set for an alternative: exact name, else a baseline/non-baseline
+    match, else the first available. */
+function pickEnvelope(envs: Record<string, EnvelopeData>, alt: string, isBaseline: boolean): EnvelopeData | undefined {
+  const keys = Object.keys(envs || {});
+  if (!keys.length) return undefined;
+  if (alt && envs[alt]) return envs[alt];
+  const baselineKey = (k: string) => /baseline|code|ashrae\s*90\.1/i.test(k);
+  const match = keys.find((k) => (isBaseline ? baselineKey(k) : !baselineKey(k)));
+  return envs[match || keys[0]];
 }
 
 /** Parse Section 1.6 (Table EAp2-4 Baseline Performance) → the baseline's 4
@@ -480,6 +544,57 @@ function parseBaselineRotations(t: string): BaselineRotation[] | null {
     int_lighting_kbtu: E("Interior Lighting", r) * KWH_TO_KBTU, ext_lighting_kbtu: E("Exterior Lighting", r) * KWH_TO_KBTU,
     int_equip_kbtu: E("Interior Equipment", r) * KWH_TO_KBTU, ext_equip_kbtu: E("Exterior Equipment", r) * KWH_TO_KBTU,
   }));
+}
+
+/** Envelope Summary → area-weighted opaque U-Factors (with film) + glazing,
+    keyed by alternative. Each opaque row reads:
+      <TYPE> <id+name> <reflectance> <gross area> <U with film> <U no film> <az>°
+    Glazing rows (Fenestration table) read:
+      ... <area one> <area openings> <U> <SHGC> <VLT> <No|Yes> ... */
+function parseEnvelope(pages: TracePage[]): Record<string, EnvelopeData> {
+  type Acc = { a: number; au: number };
+  const wsum = (x: Acc) => (x.a > 0 ? x.au / x.a : 0);
+  const byAlt: Record<string, { wall: Acc; roof: Acc; floor: Acc; slab: Acc; gU: Acc; gS: Acc; gV: Acc }> = {};
+  const blank = () => ({ a: 0, au: 0 });
+  const ensure = (alt: string) => (byAlt[alt] = byAlt[alt] || { wall: blank(), roof: blank(), floor: blank(), slab: blank(), gU: blank(), gS: blank(), gV: blank() });
+  const OPAQUE = /(Roof|WALL|SLAB|FLOOR)\s+(\S.*?)\s+[\d.]+\s+([\d,]+)\s+(\d?\.\d+)\s+\d?\.\d+\s+-?\d+\s*°/g;
+  const FEN = /[\d.]+\s+([\d.]+)\s+(\d?\.\d+)\s+(\d?\.\d+)\s+(\d?\.\d+)\s+(?:No|Yes)\b/g;
+  for (const p of pages) {
+    const t = p.text;
+    const hasOpaque = t.includes("Opaque Exterior Construction");
+    const hasFen = t.includes("Fenestration") && t.includes("Visible Transmittance");
+    if (!hasOpaque && !hasFen) continue;
+    const alt = (t.match(/Alternative:\s*(.+?)\s*Calculated at:/) || [, "?"])[1].trim();
+    const e = ensure(alt);
+    if (hasOpaque) {
+      for (const m of t.matchAll(OPAQUE)) {
+        const type = m[1].toUpperCase(), name = m[2], area = +m[3].replace(/,/g, ""), u = +m[4];
+        if (!(area > 0) || !(u > 0)) continue;
+        let cat: Acc | null = null;
+        if (type === "ROOF") cat = e.roof;
+        else if (type === "WALL") cat = e.wall;
+        else if (/slab on grade/i.test(name)) cat = e.slab;
+        else if (/floor/i.test(name)) cat = e.floor;
+        else cat = e.slab; // bare SLAB/FLOOR fallback
+        cat.a += area; cat.au += area * u;
+      }
+    }
+    if (hasFen) {
+      for (const m of t.matchAll(FEN)) {
+        const area = +m[1], u = +m[2], shgc = +m[3], vlt = +m[4];
+        if (!(area > 0)) continue;
+        e.gU.a += area; e.gU.au += area * u;
+        e.gS.a += area; e.gS.au += area * shgc;
+        e.gV.a += area; e.gV.au += area * vlt;
+      }
+    }
+  }
+  const out: Record<string, EnvelopeData> = {};
+  for (const alt in byAlt) {
+    const e = byAlt[alt];
+    out[alt] = { wallU: wsum(e.wall), roofU: wsum(e.roof), floorU: wsum(e.floor), slabU: wsum(e.slab), glassU: wsum(e.gU), glassShgc: wsum(e.gS), glassVlt: wsum(e.gV) };
+  }
+  return out;
 }
 
 /** Table EAp2-3 → electricity & gas virtual rates ($/kWh, $/therm). */

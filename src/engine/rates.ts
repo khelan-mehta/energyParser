@@ -93,6 +93,79 @@ export const STATE_NAMES: Record<string, string> = {
 };
 
 /* ============================================================
+ *  ENERGY STAR Portfolio Manager — GHG emission factors.
+ *  Source: "Greenhouse Gas Emissions Technical Reference" (EPA / ENERGY STAR,
+ *  Aug 2025), which applies EPA eGRID2023 by eGRID SUBREGION (mapped from the
+ *  building ZIP/pincode). Electricity factors are kg CO2e per MBtu of SITE
+ *  energy (Figure 5); gas is direct (Figure 1); district is Figure 3.
+ * ============================================================ */
+export const ESPM_ELEC_KG_PER_MBTU: Record<string, number> = {
+  AKGD: 120.32, AKMS: 69.45, AZNM: 93.88, CAMX: 57.16, ERCT: 97.92, FRCC: 104.33,
+  HIMS: 150.65, HIOA: 199.26, MROE: 186.77, MROW: 123.17, NEWE: 72.21, NWPP: 84.45,
+  NYCW: 115.09, NYLI: 158.10, NYUP: 32.27, PRMS: 205.85, RFCE: 79.65, RFCM: 129.74,
+  RFCW: 121.78, RMPA: 138.59, SPNO: 115.35, SPSO: 116.39, SRMV: 98.60, SRMW: 165.98,
+  SRSO: 112.46, SRTV: 120.08, SRVC: 79.27,
+};
+export const ESPM_NATIONAL_ELEC_KG_PER_MBTU = 102.48;
+export const ESPM_GAS_KG_PER_MBTU = 53.11;          // direct natural gas (US) → ÷10 = kg/therm
+export const ESPM_DISTRICT_KG_PER_MBTU = { steam: 66.40, hotWater: 66.40, chilledWaterElectric: 52.70 };
+export const ESPM_SOURCE = "ENERGY STAR Portfolio Manager — EPA eGRID2023 (Aug 2025 GHG Technical Reference)";
+
+const MBTU_TO_KWH = 1e6 / 3412.14; // 1 MBtu (million Btu) ≈ 293.07 kWh
+
+/* ENERGY STAR source-to-site ratios. These are NATIONAL sets (one for the U.S.,
+   a different one for Canada) — ESPM does NOT vary them by eGRID subregion/ZIP,
+   so every U.S. project shares the U.S. set. We only have the U.S. values, so
+   non-U.S. / undetermined locations resolve to null → the cells are left blank. */
+export interface SiteToSource { elec: number; gas: number; addFuel: number | null; dc: number; dh: number; source: string; }
+export const ESPM_SITE_TO_SOURCE_US: SiteToSource = {
+  elec: 2.80, gas: 1.05, addFuel: null, dc: 0.91, dh: 1.20,
+  source: "Energy Star US and Canadian Source to Site Ratios",
+};
+/** Resolve the source-to-site ratio set from a pincode (preferred) / US state.
+ *  US ZIP or a US state → U.S. set; Canadian postal / foreign / unknown → null. */
+export function siteToSourceFor(pincode?: string, state?: string): SiteToSource | null {
+  const zip = (pincode || "").trim();
+  if (/^\d{5}(-\d{4})?$/.test(zip)) return ESPM_SITE_TO_SOURCE_US;        // U.S. ZIP
+  if (/^[A-Za-z]\d[A-Za-z]/.test(zip)) return null;                        // Canadian postal — no provided set
+  if (state && Object.prototype.hasOwnProperty.call(STATE_NAMES, state.toUpperCase())) return ESPM_SITE_TO_SOURCE_US;
+  return null;                                                             // undetermined → leave blank
+}
+
+/** State → dominant eGRID subregion. ESPM maps by ZIP; split states are refined
+ *  by ZIP prefix in subregionFor(). Approximate for states spanning subregions. */
+export const STATE_TO_EGRID_SUBREGION: Record<string, string> = {
+  AL: "SRSO", AK: "AKGD", AZ: "AZNM", AR: "SRMV", CA: "CAMX", CO: "RMPA", CT: "NEWE",
+  DE: "RFCE", DC: "RFCE", FL: "FRCC", GA: "SRSO", HI: "HIOA", ID: "NWPP", IL: "RFCW",
+  IN: "RFCW", IA: "MROW", KS: "SPNO", KY: "SRTV", LA: "SRMV", ME: "NEWE", MD: "RFCE",
+  MA: "NEWE", MI: "RFCM", MN: "MROW", MS: "SRMV", MO: "SRMW", MT: "NWPP", NE: "MROW",
+  NV: "NWPP", NH: "NEWE", NJ: "RFCE", NM: "AZNM", NY: "NYUP", NC: "SRVC", ND: "MROW",
+  OH: "RFCW", OK: "SPSO", OR: "NWPP", PA: "RFCE", RI: "NEWE", SC: "SRVC", SD: "MROW",
+  TN: "SRTV", TX: "ERCT", UT: "NWPP", VT: "NEWE", VA: "SRVC", WA: "NWPP", WV: "RFCW",
+  WI: "MROW", WY: "RMPA",
+};
+
+/** Resolve an eGRID subregion from state + ZIP. ZIP prefixes refine the few metros
+ *  that straddle subregions (NYC vs Long Island vs Upstate NY). */
+export function subregionFor(state: string, zip?: string): string {
+  const z3 = (zip || "").replace(/\D/g, "").slice(0, 3);
+  if (state === "NY" && z3) {
+    if (/^(100|101|102|103|104|111|112|113)$/.test(z3)) return "NYCW"; // NYC metro
+    if (/^(005|110|114|115|116|117|118|119)$/.test(z3)) return "NYLI"; // Long Island
+    return "NYUP";
+  }
+  return STATE_TO_EGRID_SUBREGION[state] || "";
+}
+
+/** ENERGY STAR Portfolio Manager electricity emission factor for a subregion (kg CO2e/kWh). */
+export function espmElecCarbonPerKwh(subregion: string): number {
+  const f = ESPM_ELEC_KG_PER_MBTU[subregion] ?? ESPM_NATIONAL_ELEC_KG_PER_MBTU;
+  return f / MBTU_TO_KWH;
+}
+/** ENERGY STAR Portfolio Manager natural-gas emission factor (kg CO2e/therm). */
+export const ESPM_GAS_KG_PER_THERM = ESPM_GAS_KG_PER_MBTU / 10;
+
+/* ============================================================
  *  Cambium — diurnal (time-of-use) emission multipliers.
  *  Normalized 24-hour shape applied to the annual-average factor.
  *  Reference: NREL Cambium 2023 hourly long-run marginal emission

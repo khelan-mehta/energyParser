@@ -14,6 +14,7 @@ import type { Row } from "./sim";
 import { COLUMNS } from "./columns";
 import { enrichRow } from "./enrich";
 import type { RateConfig } from "./rates";
+import { siteToSourceFor } from "./rates";
 import templateUrl from "../assets/energy_template.xlsx?url";
 
 /* fetch the bundled template once and reuse the buffer */
@@ -123,6 +124,15 @@ function setSheetCellValue(xml: string, addr: string, value: string | number): s
   return xml; // cell not present — skip rather than risk a malformed insert
 }
 
+/** Blank an existing cell's value (keep its style), so it renders empty. */
+function clearSheetCell(xml: string, addr: string): string {
+  const re = new RegExp(`<c r="${addr}"([^>]*?)(?:/>|>[\\s\\S]*?</c>)`);
+  return xml.replace(re, (_m, attrs) => {
+    const s = (String(attrs).match(/\ss="\d+"/) || [""])[0];
+    return `<c r="${addr}"${s}/>`;
+  });
+}
+
 export interface WorkbookMeta { projectName?: string; }
 
 /* Order the baseline rows into the workbook's fixed 8-row layout when the rows
@@ -171,6 +181,21 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
     if (cfg.elec_per_kwh != null && cfg.elec_per_kwh > 0) pi = setSheetCellValue(pi, "I29", cfg.elec_per_kwh);
     if (cfg.gas_per_therm != null && cfg.gas_per_therm > 0) pi = setSheetCellValue(pi, "J29", cfg.gas_per_therm);
     if (cfg.elec_carbon_per_kwh != null && cfg.elec_carbon_per_kwh > 0) pi = setSheetCellValue(pi, "I22", cfg.elec_carbon_per_kwh);
+    // Site-to-Source ratios (Project Info row 16: I=Electricity, J=Gas, K=Additional
+    // Fuel, L=District Cooling, M=District Heating). ENERGY STAR source-to-site
+    // ratios are national (one U.S. set, one Canadian); we resolve the set from the
+    // project's pincode/state. A non-U.S. or undetermined location → leave blank.
+    const sts = siteToSourceFor(cfg.pincode, cfg.state);
+    if (sts) {
+      pi = setSheetCellValue(pi, "I16", sts.elec);
+      pi = setSheetCellValue(pi, "J16", sts.gas);
+      pi = sts.addFuel != null ? setSheetCellValue(pi, "K16", sts.addFuel) : clearSheetCell(pi, "K16");
+      pi = setSheetCellValue(pi, "L16", sts.dc);
+      pi = setSheetCellValue(pi, "M16", sts.dh);
+      pi = setSheetCellValue(pi, "N16", sts.source);
+    } else {
+      for (const a of ["I16", "J16", "K16", "L16", "M16", "N16"]) pi = clearSheetCell(pi, a);
+    }
     zip.file(paths[piName], pi);
   }
 

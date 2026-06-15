@@ -31,9 +31,12 @@ export function enrichRow(data: Row, cfg: RateConfig): Row {
     gas_rate_per_kbtu = cfg.gas_per_therm / THERM_TO_KBTU;
   }
 
-  const total_cost = elec_kbtu * elec_rate_per_kbtu + gas_kbtu * gas_rate_per_kbtu
+  const computed_cost = elec_kbtu * elec_rate_per_kbtu + gas_kbtu * gas_rate_per_kbtu
     + (data.district_cooling_kbtu || 0) * (cfg.dc_rate_per_kbtu || 0)
     + (data.district_heating_kbtu || 0) * (cfg.dh_rate_per_kbtu || 0);
+  // Prefer the model's reported total energy cost (e.g. TRACE Table EAp2-7) when present;
+  // otherwise fall back to energy × virtual rate.
+  const total_cost = (typeof data.model_total_cost === "number" && data.model_total_cost > 0) ? data.model_total_cost : computed_cost;
   const cost_intensity = cond_area > 0 ? total_cost / cond_area : 0;
 
   /* ---- CARBON: eGRID | Cambium-TOU | manual ---- */
@@ -71,6 +74,23 @@ export function enrichRow(data: Row, cfg: RateConfig): Row {
   if (!glass_vlt && glass_u > 0) glass_vlt = cfg.default_vlt != null ? cfg.default_vlt : 0.9;
   const glass_lsg = glass_shgc > 0 ? glass_vlt / glass_shgc : 0;
 
+  /* ---- ENVELOPE U-VALUES + area-weighted assemblies ---- */
+  const wall_u = data.wall_u_value || 0, roof_u = data.roof_u_value || 0;
+  const slab_u = data.slab_u_value || 0, exposed_floor_u = data.exposed_floor_u_value || 0;
+  const wall_area = data.gross_wall_area || data.above_ground_wall_area || 0;
+  const win_area = data.total_window_area || 0;
+  const roof_area = data.gross_roof_area || 0;
+  const opaque_wall = Math.max(wall_area - win_area, 0);
+  // Vertical-weighted U = (opaque wall·U + window·U) ÷ gross wall area. Honor a parser-
+  // supplied value first (SIM provides one from LV-D); else derive it.
+  let vert_weighted_u = data.vert_weighted_u || 0;
+  if (!vert_weighted_u && wall_u > 0 && wall_area > 0) vert_weighted_u = (opaque_wall * wall_u + win_area * glass_u) / wall_area;
+  const vert_weighted_r = vert_weighted_u > 0 ? 1 / vert_weighted_u : 0;
+  // Assembly U = area-weighted opaque wall + roof.
+  let assembly_u_value = data.assembly_u_value || 0;
+  if (!assembly_u_value && wall_u > 0 && roof_u > 0 && (opaque_wall + roof_area) > 0)
+    assembly_u_value = (opaque_wall * wall_u + roof_area * roof_u) / (opaque_wall + roof_area);
+
   const chiller_cop = data.inp_chiller_cop || 0;
   const boiler_cop = data.inp_boiler_cop || 0;
 
@@ -92,13 +112,15 @@ export function enrichRow(data: Row, cfg: RateConfig): Row {
     north_wwr_nominal: round1(data.north_wwr_actual || 0), east_wwr_nominal: round1(data.east_wwr_actual || 0),
     south_wwr_nominal: round1(data.south_wwr_actual || 0), west_wwr_nominal: round1(data.west_wwr_actual || 0),
     glass_shgc, glass_vlt, glass_u_value: glass_u, glass_lsg,
+    wall_u_value: wall_u, roof_u_value: roof_u, slab_u_value: slab_u, exposed_floor_u_value: exposed_floor_u,
+    vert_weighted_u, vert_weighted_r, assembly_u_value,
     chiller_cop, boiler_cop, hp_cooling_cop: 0, hp_heating_cop: 0,
     north_shading_type: data.inp_north_shading_type || "None", north_shading_ratio: round1(data.inp_north_shading_ratio || 0),
     west_shading_type: data.inp_west_shading_type || "None", west_shading_ratio: round1(data.inp_west_shading_ratio || 0),
     south_shading_type: data.inp_south_shading_type || "None", south_shading_ratio: round1(data.inp_south_shading_ratio || 0),
     east_shading_type: data.inp_east_shading_type || "None", east_shading_ratio: round1(data.inp_east_shading_ratio || 0),
-    wall2_u_value: 0, exposed_floor_u_value: 0, assembly_u_value: data.vert_weighted_u || 0,
-    infil_cfm_ft2: 0, total_pump_kw: data.total_pump_kw || 0,
+    wall2_u_value: data.wall2_u_value || 0,
+    infil_cfm_ft2: data.infil_cfm_ft2 || 0, total_pump_kw: data.total_pump_kw || 0,
   };
 
   const merged: Row = { ...extra, ...data };
@@ -108,7 +130,8 @@ export function enrichRow(data: Row, cfg: RateConfig): Row {
     "dc_carbon_rate", "dh_carbon_rate", "dc_rate_per_kbtu", "dh_rate_per_kbtu",
     "water_rate_per_kgal", "total_water_cost", "water_use_intensity", "location_name",
     "glass_shgc", "glass_vlt", "glass_u_value", "glass_lsg", "chiller_cop", "boiler_cop",
-    "assembly_u_value", "north_wwr_nominal", "east_wwr_nominal", "south_wwr_nominal", "west_wwr_nominal",
+    "assembly_u_value", "vert_weighted_u", "vert_weighted_r",
+    "north_wwr_nominal", "east_wwr_nominal", "south_wwr_nominal", "west_wwr_nominal",
   ]) {
     merged[k] = extra[k];
   }

@@ -1,0 +1,211 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>
+endobj
+6 0 obj
+<< /Length 7862 >>
+stream
+0.1 0.1 0.12 rg BT /B 19 Tf 54 709 Td (Casa De Amparo - TRACE Parser vs. Field-Mapping) Tj ET
+0.42 0.42 0.45 rg BT /H 9 Tf 54 693.4 Td (Field-by-field comparison of the energy-parser \(src/engine/trace.ts + enrich.ts\) against) Tj ET
+0.42 0.42 0.45 rg BT /H 9 Tf 54 681.8 Td (Casa_De_Amparo_Mapping.xlsx, with brief fix steps.) Tj ET
+0.42 0.42 0.45 rg BT /H 8.5 Tf 54 668.6999999999999 Td (Generated 2026-06-15 ∑ Source PDF: Casa De Amparo_v4 \(TRACE 3D Plus 7.00, 725 pp\).) Tj ET
+0.78 0 0.17 rg BT /B 13.5 Tf 54 642.5999999999999 Td (0. How to read this report) Tj ET
+0.85 0.85 0.87 RG 0.7 w 54 633.9999999999999 m 558 633.9999999999999 l S
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 617.4999999999999 Td (The mapping spreadsheet is the intended derivation spec \(which report / section / column each field) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 605.3999999999999 Td (comes from, and the formula\). Its absolute numbers, however, come from a DIFFERENT model run than the) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 593.2999999999998 Td (uploaded PDF \(mapping proposed total = 534,633 kBtu; this PDF = 742,871 kBtu\). So the comparison below) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 581.1999999999998 Td (is about DERIVATION METHOD and SOURCE, not matching exact values.) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 567.0999999999998 Td (Most fields already agree in method \(see ß3\). Section 1 lists only the fields where our parser pulls) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 554.9999999999998 Td (from a different place or computes differently. Section 2 gives brief, low-risk steps to align them.) Tj ET
+0.78 0 0.17 rg BT /B 13.5 Tf 54 530.8999999999997 Td (1. Field calculation differences) Tj ET
+0.85 0.85 0.87 RG 0.7 w 54 522.2999999999997 m 558 522.2999999999997 l S
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 501.7999999999997 Td (A. Envelope Thermal - NOT PARSED \(largest gap\)) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 488.1999999999997 Td (Our parser reads wall AREAS and WWR from the "Lighting and Daylighting Summary" report, but never) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 476.0999999999997 Td (opens the "Envelope Summary" \(Opaque Exterior Construction U-Factors, pp.408+\) or the "Fenestration") Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 463.99999999999966 Td (table \(glass U-Factor / SHGC / Visible Transmittance, pp.429+\). All of the following therefore come) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 451.89999999999964 Td (out blank / 0:) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 438.2999999999996 Td (Wall U-Value  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 125.4 438.2999999999996 Td (Mapping: Envelope Summary -> Opaque Exterior Construction, "U-Factor With Film". Ours: not) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 125.4 427.2999999999996 Td (parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 415.2999999999996 Td (Roof U-Value  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 125.4 415.2999999999996 Td (Mapping: same section, Roof row \(e.g. 0.026 in this PDF\). Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 403.2999999999996 Td (Exposed Floor U  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 140.7 403.2999999999996 Td (Mapping: Envelope Summary floor construction. Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 391.2999999999996 Td (Slab-on-Grade U  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 140.7 391.2999999999996 Td (Mapping: Envelope Summary slab construction. Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 379.2999999999996 Td (Glass U-Value  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 130.5 379.2999999999996 Td (Mapping: Fenestration "U-Factor" \(0.501\). Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 367.2999999999996 Td (Glass SHGC  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 115.19999999999999 367.2999999999996 Td (Mapping: Fenestration "SHGC" \(0.401\). Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 355.2999999999996 Td (Glass VLT  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 110.1 355.2999999999996 Td (Mapping: Fenestration "Visible Transmittance" \(0.442\). Ours: not parsed -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 343.2999999999996 Td (Glass LSG  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 110.1 343.2999999999996 Td (Derived VLT/SHGC. Ours: 0 because VLT & SHGC are missing.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 331.2999999999996 Td (Vert. Weighted U/R  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 156 331.2999999999996 Td (Mapping: area-weighted wall+glazing \(then R=1/U\). Ours: 0 - vert_weighted_u never set) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 156 320.2999999999996 Td (for TRACE.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 308.2999999999996 Td (Assembly U-Value  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 145.8 308.2999999999996 Td (Mapping: area-weighted wall+roof. Ours: 0 - depends on wall/roof U which are missing.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 296.2999999999996 Td (Infiltration Rate  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 296.2999999999996 Td (Mapping: ACHxvolume/60, summed, /facade area. Ours: hard-coded 0 in enrichRow.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 279.7999999999996 Td (B. Geometry ratios - wrong denominator) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 266.6999999999996 Td (Wall-to-Floor Ratio  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 266.6999999999996 Td (Mapping: Gross Wall / CONDITIONED area \(11,729/13,652 = 0.859\). Ours: divides by) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 255.6999999999996 Td (gross/total area \(11,729/21,103 = 0.556\) - siteToRow uses gfa, not) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 244.6999999999996 Td (conditioned_floor_area.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 232.6999999999996 Td (Roof-to-Floor Ratio  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 232.6999999999996 Td (Mapping: Gross Roof / CONDITIONED area \(15,695/13,652 = 1.150\). Ours: / total area =) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 221.6999999999996 Td (0.744. Same denominator bug.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 205.1999999999996 Td (C. Peak Loads - different physical basis) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 192.0999999999996 Td (Peak Heating \(kBtuh\)  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 192.0999999999996 Td (Mapping: Table EAp2-5 "Heating Demand kW" x 3.412 \(electric demand\). Ours: Project) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 181.0999999999996 Td (Summary "Site Peak Heating Load \(MBh\)" = 410 \(THERMAL load\). Different quantities ->) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 170.0999999999996 Td (large gap \(410 vs ~129 here\).) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 158.0999999999996 Td (Peak Cooling \(kBtuh\)  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 158.0999999999996 Td (Mapping: EAp2-5 "Cooling Demand kW" x 3.412. Ours: "Site Peak Cooling Load \(tons\)") Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 147.0999999999996 Td (x 12 = 300 \(thermal\). Different basis - decide which the workbook column intends.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 135.0999999999996 Td (Peak Electrical \(W\)  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 135.0999999999996 Td (Method matches \(Peak Demand kW x 1000\); ours reads Project Summary "Annual Peak) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 161.1 124.0999999999996 Td (Electrical Demand". Verify it is the same peak the mapping intends \(LEED summary\).) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 107.5999999999996 Td (D. Economics - computed vs. read) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 94.4999999999996 Td (Total Energy Cost  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 94.4999999999996 Td (Mapping: DIRECT read of Table EAp2-7 \(Proposed 26,968 in this PDF\). Ours: enrichRow) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 83.4999999999996 Td (COMPUTES cost = energy x virtual rate. It matches only when the model's virtual rate) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 72.4999999999996 Td (is used; with the finder/manual rate it diverges. We already parse the figure in) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 61.4999999999996 Td (parseEconomic\(\) but never use it.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Length 6921 >>
+stream
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 717.5 Td (E. Carbon - factor value) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 704.4 Td (Carbon Factor  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 130.5 704.4 Td (Mapping: 0.053 kg CO2e/kBtu \(~ 0.181 kg/kWh, CA grid\). Ours: eGRID2022 CA = 0.21 kg/kWh ->) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 130.5 693.4 Td (0.0615 kg/kBtu, ~16% higher. Config/reference difference, not a code bug.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 676.9 Td (F. System Efficiencies - not parsed for TRACE) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 663.8 Td (Total Fan Power \(kW\)  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 663.8 Td (Mapping: sum of supply-fan kW from System Component Summary \(proposed\) / PRM fan) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 166.2 652.8 Td (power \(baseline\). Ours: total_fan_kw never set for TRACE -> 0.) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 640.8 Td (DX / VRF / HP COP  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 640.8 Td (Mapping: manual ASHRAE 90.1 table references. Ours: 0 - expected to stay manual, but) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 150.9 629.8 Td (flag as a known gap.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 613.3 Td (G. Occupancy) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 600.1999999999999 Td (Occupant Density  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 145.8 600.1999999999999 Td (Mapping: TOTAL building area / occupants \(21,103/125 = 168.8 ft2/person\). Ours:) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 145.8 589.1999999999999 Td (CONDITIONED area / occupants \(13,652/125 = 109.2\). Area-basis difference.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 572.6999999999999 Td (H. Per-direction WWR "Actual" \(minor\)) Tj ET
+0.78 0 0.17 rg BT /CB 8.5 Tf 54 559.5999999999999 Td (N/E/S/W WWR Actual  ) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 156 559.5999999999999 Td (Mapping: Window Opening Area / Gross Wall Area per direction. Ours: stores the "Gross) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 156 548.5999999999999 Td (Window-Wall Ratio" \(nominal\) value into the actual field. Values are ~identical here,) Tj ET
+0.1 0.1 0.12 rg BT /H 9 Tf 156 537.5999999999999 Td (but the formula differs. We already parse windowOpening per direction.) Tj ET
+0.78 0 0.17 rg BT /B 13.5 Tf 54 515.0999999999999 Td (2. Steps to change \(brief, low-risk\)) Tj ET
+0.85 0.85 0.87 RG 0.7 w 54 506.4999999999999 m 558 506.4999999999999 l S
+0.42 0.42 0.45 rg BT /H 9 Tf 54 490.4999999999999 Td (All changes are in src/engine/trace.ts unless noted. Ordered by impact.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 472.39999999999986 Td (S1 - Parse the Envelope Summary + Fenestration \(fixes all of A\)) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 458.79999999999984 Td (Add a page finder + two small parsers and set the row fields. The data layout \(confirmed in this PDF\):) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 445.8999999999998 Td (Opaque Exterior Construction ... U-Factor With Film \(BTU/h-ft2-∞F\)) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 435.7999999999998 Td (Roof <name> <refl> <area> 0.026 ... -> row.roof_u_value) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 425.69999999999976 Td (Wall <name> <refl> <area> 0.046 ... -> row.wall_u_value \(area-wtd if many\)) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 415.59999999999974 Td (Fenestration ... U-Factor SHGC Visible Transmittance) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 405.4999999999997 Td (90.1-13 Window ... 0.501 0.401 0.442 -> glass_u_value / glass_shgc / glass_vlt) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 392.8999999999997 Td (- In parseTrace\(\): const ep = pages.find\(p => p.text.includes\('Opaque Exterior Construction'\)\); const fe =) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 381.4999999999997 Td (pages.find\(p => p.text.includes\('Fenestration'\) && /U-Factor/.test\(p.text\)\);) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 368.09999999999974 Td (- Regex per construction row: /\\b\(Roof|Wall|Floor|Slab\)\\b[^\\n]*?\\s\([0-9.]+\)\\s+[0-9.]+\\s+\\d+\\s*∞/ - take the) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 356.69999999999976 Td (WITH-FILM column; average by gross area when several rows share a face.) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 343.2999999999998 Td (- Fenestration: collect all /\([0-9.]+\)\\s+\([0-9.]+\)\\s+\([0-9.]+\)\\s+\(?:No|Yes\)/ triples after the header ->) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 331.8999999999998 Td (average -> glass_u_value, glass_shgc, glass_vlt.) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 318.49999999999983 Td (- enrichRow already derives glass_lsg from VLT/SHGC. To fill vertical-weighted & assembly U, also set) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 307.09999999999985 Td (row.vert_weighted_u = \(wallArea∑wallU + winArea∑glassU\)/grossWallArea and compute assembly U = \(wallArea∑wallU) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 295.6999999999999 Td (+ roofArea∑roofU\)/\(wallArea+roofArea\).) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 277.5999999999999 Td (S2 - Fix wall/roof-to-floor denominator \(fixes B\)) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 263.9999999999999 Td (In siteToRow\(\), the ratios are computed in the lighting block using gfa \(gross\). Move them after) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 251.89999999999986 Td (conditioned area is known, or just divide by conditioned_floor_area:) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 238.99999999999986 Td (const denom = row.conditioned_floor_area || gfa;) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 228.89999999999986 Td (row.wall_to_floor_ratio = light.wallArea.total / denom;) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 218.79999999999987 Td (row.roof_to_floor_ratio = light.grossRoofArea / denom;) Tj ET
+0.2 0.2 0.23 rg BT /C 8.3 Tf 54 208.69999999999987 Td (row.envelope_to_floor_ratio = row.wall_to_floor_ratio + row.roof_to_floor_ratio;) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 191.3999999999999 Td (S3 - Use the model's reported Total Energy Cost \(fixes D\)) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 177.7999999999999 Td (We already parse Table EAp2-7 / Economic Comparison in parseEconomic\(\) \(utilityCost\). Carry it onto) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 165.6999999999999 Td (the row and prefer it:) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 152.2999999999999 Td (- In siteToRow\(\): match the alternative's economic row -> row.model_total_cost = econ.utilityCost.) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 138.8999999999999 Td (- In enrichRow\(\): if data.model_total_cost > 0, use it for total_cost instead of energyxrate \(keeps) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 127.4999999999999 Td (cost_intensity = model_total_cost / area\).) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 109.39999999999989 Td (S4 - Parse fan power \(fixes F1\)) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 95.7999999999999 Td (Find the System Component Summary page; sum the supply-fan kW column -> row.supply_fan_kw /) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 83.6999999999999 Td (row.total_fan_kw \(enrichRow already surfaces total_fan_kw / total_pump_kw\).) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 65.59999999999991 Td (S5 - Decide peak-load basis \(C\)) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Length 2459 >>
+stream
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 718.5 Td (If the workbook columns mean ELECTRIC demand \(mapping\), parse Table EAp2-5 "Demand kW" per end use and) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 706.4 Td (use Heating/Cooling demand x 3.412. If they mean THERMAL load, keep the current Project Summary) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 694.3 Td (tons/MBh. Recommend confirming with the template owner before changing - cooling currently happens to) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 682.1999999999999 Td (match the mapping number.) Tj ET
+0.1 0.1 0.12 rg BT /B 10.5 Tf 54 664.0999999999999 Td (S6 - Small one-liners \(E, G, H\)) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 651.1999999999999 Td (- Carbon \(E\): set the project's grid factor to the intended value \(~ 0.181 kg/kWh for CA\) in the rate config,) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 639.8 Td (or switch carbon_method to Cambium; no code change needed.) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 626.4 Td (- Occupant density \(G\): pick the area basis to match the template - change area in siteToRow's occ_density) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 615 Td (calc from conditioned to total_floor_area \(or vice-versa\).) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 601.6 Td (- WWR actual \(H\): set row.<dir>_wwr_actual = light.windowOpening.<dir> / light.wallArea.<dir> x 100) Tj ET
+0.1 0.1 0.12 rg BT /H 8.8 Tf 54 590.2 Td (\(windowOpening is already parsed\).) Tj ET
+0.78 0 0.17 rg BT /B 13.5 Tf 54 566.1 Td (3. Fields that already match \(no change needed\)) Tj ET
+0.85 0.85 0.87 RG 0.7 w 54 557.5 m 558 557.5 l S
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 541 Td (Total energy & EUI \(Site Consumption Grand Total = Table EAp2-6\); electricity / gas; end-use breakdown) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 528.9 Td (\(heating, cooling, fans, interior lighting & equipment\); conditioned & total floor area; gross/N/E/S/W) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 516.8 Td (wall areas; gross roof & skylight; building & nominal WWR; ventilation / heating / cooling airflow) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 504.69999999999993 Td (\(Project Summary = mapping values 1,550 / 4,082 / 8,767 cfm\); LPD & EPD \(0.45 / 0.69\); electricity) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 492.5999999999999 Td (virtual rate; unmet heating/cooling hours \(Project Summary agrees with Table EAp2-2: 105 / 547\); peak) Tj ET
+0.1 0.1 0.12 rg BT /H 9.5 Tf 54 480.4999999999999 Td (electrical method; climate zone & weather file.) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Pages /Count 3 /Kids [10 0 R 11 0 R 12 0 R] >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /H 1 0 R /B 2 0 R /O 3 0 R /C 4 0 R /CB 5 0 R >> >> /Contents 6 0 R >>
+endobj
+11 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /H 1 0 R /B 2 0 R /O 3 0 R /C 4 0 R /CB 5 0 R >> >> /Contents 7 0 R >>
+endobj
+12 0 obj
+<< /Type /Page /Parent 9 0 R /MediaBox [0 0 612 792] /Resources << /Font << /H 1 0 R /B 2 0 R /O 3 0 R /C 4 0 R /CB 5 0 R >> >> /Contents 8 0 R >>
+endobj
+13 0 obj
+<< /Type /Catalog /Pages 9 0 R >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000000160 00000 n 
+0000000238 00000 n 
+0000000306 00000 n 
+0000000379 00000 n 
+0000008293 00000 n 
+0000015266 00000 n 
+0000017777 00000 n 
+0000017849 00000 n 
+0000018012 00000 n 
+0000018175 00000 n 
+0000018338 00000 n 
+trailer
+<< /Size 14 /Root 13 0 R >>
+startxref
+18388
+%%EOF

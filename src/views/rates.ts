@@ -13,7 +13,7 @@ import {
   gatherElectricity, gatherGas, gatherCarbon, gatherWater, pickMax, chatgptWaterCharges,
   GatherOpts, RateCandidate, EIA_COMM_CENTS_PER_KWH, EIA_GAS_DOLLARS_PER_THERM, WATER_DOLLARS_PER_KGAL,
 } from "../engine/sources";
-import { Rates, RateHistory, RateSnapshot } from "../api";
+import { Rates, RateHistory, RateSnapshot, RateSet, authUser } from "../api";
 
 type Entity = "electricity" | "gas" | "carbon" | "water";
 const ENTITIES: Entity[] = ["electricity", "gas", "carbon", "water"];
@@ -74,14 +74,99 @@ export function renderRates(root: HTMLElement) {
   root.appendChild(finalTable(root));
   root.appendChild(waterCard(root));
   root.appendChild(districtCard());
+  root.appendChild(savedSetsCard(root));
   root.appendChild(historyCard(root));
   root.appendChild(sourcesFooter());
 
-  root.querySelector("#r-saveset")!.addEventListener("click", async () => {
-    const name = prompt("Name this rate set:", store.rates.location_name || "My rates");
-    if (!name) return;
-    try { await Rates.save(name, store.rates); await recordSnapshot(root, true); toast(`✓ Saved "${name}"`); } catch (e: any) { toast("Save failed — " + e.message); }
+  root.querySelector("#r-saveset")!.addEventListener("click", () => saveCurrentAsNew(root));
+}
+
+/* ---------- saved rate sets (reusable across projects) ---------- */
+function owns(rs: RateSet): boolean { return !!authUser && (rs.ownerId === authUser.id || authUser.role === "admin"); }
+
+async function saveCurrentAsNew(root: HTMLElement) {
+  const c = store.rates;
+  if (c.elec_per_kwh == null && c.gas_per_therm == null && c.elec_carbon_per_kwh == null && c.water_per_kgal == null) {
+    toast("Nothing to save yet — source or enter a rate first"); return;
+  }
+  const name = prompt("Name this rate set:", c.location_name || [c.city, c.state].filter(Boolean).join(", ") || "My rates");
+  if (!name) return;
+  try { await Rates.save(name.trim(), store.rates); await recordSnapshot(root, true); toast(`✓ Saved "${name.trim()}"`); loadSavedSets(root); }
+  catch (e: any) { toast("Save failed — " + e.message); }
+}
+
+function savedSetsCard(root: HTMLElement): HTMLElement {
+  const card = h(`<div class="card" id="saved-sets-card" style="margin-top:16px">
+    <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.rates("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div><h3>Saved Rate Sets</h3><span class="sub">reusable rate sets — load onto any project or pick during parsing</span><div class="right"><button class="btn btn-sm btn-dark" id="ss-savenew">${ICON.plus()} Save current as set</button></div></div>
+    <div id="ss-body"><div style="color:var(--g400);font-size:13px;padding:8px 0">Loading…</div></div>
+  </div>`);
+  card.querySelector("#ss-savenew")!.addEventListener("click", () => saveCurrentAsNew(root));
+  requestAnimationFrame(() => loadSavedSets(root)); // defer until the card is mounted in root
+  return card;
+}
+
+function setVal(rs: RateSet, key: string): number | null { const v = rs.config ? rs.config[key] : null; return (typeof v === "number" && isFinite(v)) ? v : null; }
+function setCell(v: number | null, digits = 4): string { return v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: digits }); }
+
+async function loadSavedSets(root: HTMLElement) {
+  const body = root.querySelector("#ss-body") as HTMLElement; if (!body) return;
+  let sets: RateSet[] = [];
+  try { const res = await Rates.list(); sets = (res.rateSets || []) as RateSet[]; }
+  catch (e: any) { body.innerHTML = `<div style="color:var(--red);font-size:13px">${esc(e.message)}</div>`; return; }
+  if (!sets.length) { body.innerHTML = `<div style="color:var(--g400);font-size:13px;padding:8px 0">No saved sets yet — set your rates above and hit “Save current as set”.</div>`; return; }
+  sets.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+
+  body.innerHTML = "";
+  const scroll = h(`<div style="overflow-x:auto"></div>`);
+  const table = h(`<table class="final-table mepc-table"><thead><tr>
+    <th style="text-align:left">Name</th>
+    <th>Elec<br><span style="font-weight:400;color:var(--g400);font-size:10px">$/kWh</span></th>
+    <th>Gas<br><span style="font-weight:400;color:var(--g400);font-size:10px">$/therm</span></th>
+    <th>Carbon<br><span style="font-weight:400;color:var(--g400);font-size:10px">kg/kWh</span></th>
+    <th>Water<br><span style="font-weight:400;color:var(--g400);font-size:10px">$/kGal</span></th>
+    <th style="text-align:left">Updated</th><th></th></tr></thead><tbody></tbody></table>`);
+  const tb = table.querySelector("tbody")!;
+  sets.forEach((rs) => {
+    const mine = owns(rs);
+    const when = new Date(rs.updatedAt || rs.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    const loc = rs.config?.location_name || rs.config?.state || "";
+    const ownerTag = rs.shared && !mine ? ` <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;background:#dcfce7;color:#15803d">shared · ${esc(rs.ownerName || "")}</span>` : (rs.shared ? ` <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;background:#dcfce7;color:#15803d">shared</span>` : "");
+    const tr = h(`<tr>
+      <td class="l" style="max-width:220px"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(rs.name)}">${esc(rs.name)}${ownerTag}</div>${loc ? `<div style="font-size:11px;color:var(--g400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(loc))}</div>` : ""}</td>
+      <td>${setCell(setVal(rs, "elec_per_kwh"))}</td>
+      <td>${setCell(setVal(rs, "gas_per_therm"))}</td>
+      <td>${setCell(setVal(rs, "elec_carbon_per_kwh"))}</td>
+      <td>${setCell(setVal(rs, "water_per_kgal"), 3)}</td>
+      <td class="l" style="white-space:nowrap;color:var(--g500)">${esc(when)}</td>
+      <td><div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn btn-sm ss-load" title="Apply to current rates">Load</button>
+        ${mine ? `<button class="btn btn-sm ss-update" title="Overwrite with current rates">Update</button>
+        <button class="btn btn-sm ss-rename" title="Rename">✎</button>
+        <button class="btn btn-sm ss-share" title="${rs.shared ? "Make private" : "Share with team"}">${rs.shared ? "Unshare" : "Share"}</button>
+        <button class="btn btn-sm ss-del" title="Delete">✕</button>` : ""}
+      </div></td>
+    </tr>`);
+    tr.querySelector(".ss-load")!.addEventListener("click", () => {
+      store.rates = { ...store.rates, ...rs.config }; emit(); toast(`✓ Loaded "${rs.name}"`); rerender(root);
+    });
+    tr.querySelector(".ss-update")?.addEventListener("click", async () => {
+      if (!confirm(`Overwrite "${rs.name}" with the current rates?`)) return;
+      try { await Rates.update(rs.id, { config: store.rates }); toast(`✓ Updated "${rs.name}"`); loadSavedSets(root); } catch (e: any) { toast("Update failed — " + e.message); }
+    });
+    tr.querySelector(".ss-rename")?.addEventListener("click", async () => {
+      const name = prompt("Rename rate set:", rs.name); if (!name || name.trim() === rs.name) return;
+      try { await Rates.update(rs.id, { name: name.trim() }); toast("✓ Renamed"); loadSavedSets(root); } catch (e: any) { toast("Rename failed — " + e.message); }
+    });
+    tr.querySelector(".ss-share")?.addEventListener("click", async () => {
+      try { await Rates.update(rs.id, { shared: !rs.shared }); toast(rs.shared ? "Set to private" : "✓ Shared with team"); loadSavedSets(root); } catch (e: any) { toast("Failed — " + e.message); }
+    });
+    tr.querySelector(".ss-del")?.addEventListener("click", async () => {
+      if (!confirm(`Delete rate set "${rs.name}"?`)) return;
+      try { await Rates.remove(rs.id); toast("Deleted"); loadSavedSets(root); } catch (e: any) { toast("Delete failed — " + e.message); }
+    });
+    tb.appendChild(tr);
   });
+  scroll.appendChild(table); body.appendChild(scroll);
 }
 
 function addressCard(root: HTMLElement): HTMLElement {
@@ -410,7 +495,7 @@ function historyCard(root: HTMLElement): HTMLElement {
     if (!confirm("Clear all rate history?")) return;
     try { await RateHistory.clear(); lastSnapKey = ""; loadHistory(root); toast("History cleared"); } catch (e: any) { toast("Clear failed — " + e.message); }
   });
-  loadHistory(root);
+  requestAnimationFrame(() => loadHistory(root)); // defer until the card is mounted in root
   return card;
 }
 

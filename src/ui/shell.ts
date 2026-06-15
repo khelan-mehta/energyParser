@@ -16,12 +16,20 @@ let current: Route = "dashboard";
 let contentEl: HTMLElement;
 let navContainer: HTMLElement;
 
+// Sidebar groups, in display order. An empty label renders no section heading.
+const GROUPS: { key: string; label: string }[] = [
+  { key: "top", label: "" },
+  { key: "utility", label: "Project Utility Data" },
+  { key: "energy", label: "Project Energy Data" },
+  { key: "general", label: "More" },
+];
+
 const NAV: { route: Route; label: string; icon: (c?: string) => string; group: string; adminOnly?: boolean }[] = [
-  { route: "dashboard", label: "Dashboard", icon: ICON.dashboard, group: "menu" },
-  { route: "marcus", label: "Marcus", icon: ICON.trace, group: "menu" },
-  { route: "mepc", label: "MEPC", icon: ICON.table, group: "menu" },
-  { route: "report", label: "Word Report", icon: ICON.book, group: "menu" },
-  { route: "rates", label: "Utility Rates", icon: ICON.rates, group: "menu" },
+  { route: "dashboard", label: "Dashboard", icon: ICON.dashboard, group: "top" },
+  { route: "rates", label: "Project Utility Data", icon: ICON.rates, group: "utility" },
+  { route: "marcus", label: "Energy Results Comparison", icon: ICON.chart, group: "energy" },
+  { route: "report", label: "Energy Results Report", icon: ICON.book, group: "energy" },
+  { route: "mepc", label: "MEPC Calculator", icon: ICON.table, group: "energy" },
   { route: "leed", label: "LEED Guidance", icon: ICON.leed, group: "general" },
   { route: "docs", label: "Documentation", icon: ICON.book, group: "general" },
   { route: "admin", label: "Admin", icon: ICON.settings, group: "general", adminOnly: true },
@@ -56,9 +64,11 @@ export function mountShell(app: HTMLElement) {
   const sidebar = h(`<aside class="sidebar"></aside>`);
   sidebar.appendChild(h(`<div class="brand"><div class="brand-name">Marc<b>us</b></div></div>`));
   navContainer = h(`<nav style="flex:1"></nav>`);
-  for (const group of ["menu", "general"]) {
-    navContainer.appendChild(h(`<div class="nav-label">${group === "menu" ? "Workspace" : "More"}</div>`));
-    NAV.filter((x) => x.group === group && (!x.adminOnly || isAdmin)).forEach((item) => {
+  for (const group of GROUPS) {
+    const items = NAV.filter((x) => x.group === group.key && (!x.adminOnly || isAdmin));
+    if (!items.length) continue;
+    if (group.label) navContainer.appendChild(h(`<div class="nav-label">${esc(group.label)}</div>`));
+    items.forEach((item) => {
       const btn = h(`<button class="nav-item ${item.route === current ? "active" : ""}" data-route="${item.route}">${item.icon()} <span>${item.label}</span></button>`);
       btn.addEventListener("click", () => navigate(item.route));
       navContainer.appendChild(btn);

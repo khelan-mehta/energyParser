@@ -155,8 +155,19 @@ app.get("/api/rates", authMiddleware, (req, res) => {
 });
 app.post("/api/rates", authMiddleware, (req, res) => {
   const { name, config, shared } = req.body || {};
-  const rs = { id: uid(), ownerId: req.user.id, ownerName: req.user.name, name: name || "Rate set", config: config || {}, shared: !!shared, createdAt: Date.now() };
+  const now = Date.now();
+  const rs = { id: uid(), ownerId: req.user.id, ownerName: req.user.name, name: name || "Rate set", config: config || {}, shared: !!shared, createdAt: now, updatedAt: now };
   db.rateSets.push(rs); save();
+  res.json({ rateSet: rs });
+});
+app.put("/api/rates/:id", authMiddleware, (req, res) => {
+  const rs = db.rateSets.find((x) => x.id === req.params.id && (x.ownerId === req.user.id || req.user.role === "admin"));
+  if (!rs) return res.status(404).json({ error: "not found" });
+  const { name, config, shared } = req.body || {};
+  if (name != null) rs.name = String(name);
+  if (config != null) rs.config = config;
+  if (shared != null) rs.shared = !!shared;
+  rs.updatedAt = Date.now(); save();
   res.json({ rateSet: rs });
 });
 app.delete("/api/rates/:id", authMiddleware, (req, res) => {
