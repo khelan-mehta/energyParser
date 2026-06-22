@@ -10,6 +10,15 @@ import { ICON } from "../ui/icons";
 import { infoBoxes } from "../ui/infoboxes";
 import { makeChart } from "../ui/charts";
 import { parseAll, buildDataWorkbook, fillXlsm, MepcInputs } from "../engine/mepc";
+import { extractMepcSchema } from "../engine/mepc-schema";
+import { autofillSchema, autofillModeling, MepcAutofillContext } from "../engine/mepc-autofill";
+import { digestFiles } from "../engine/mepc-digest";
+import { serializeDraft, applyDraft } from "../engine/mepc-draft";
+import { openMepcMockup } from "./mepc-mockup";
+import { store } from "../store";
+import { Projects } from "../api";
+import { loadTracePages } from "../engine/trace-load";
+import * as XLSX from "xlsx-js-style";
 
 /* ---- module state (mirrors the HTML's globals) ---- */
 const files: { tpl: File | null; base: File | null; prop: File | null; rot: File[]; inp: File[] | File | null } = {
@@ -123,7 +132,8 @@ function generateCard(root: HTMLElement): HTMLElement {
     <div class="card-hd"><div class="list-ico" style="background:var(--g100)">${ICON.bolt()}</div><h3>2 · Generate</h3></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary" id="mepc-go" disabled>${ICON.bolt()} Process files</button>
-      <button class="btn btn-dark" id="mepc-data" disabled>${ICON.download()} Download copy-paste tables (.xlsx)</button>
+      <button class="btn btn-dark" id="mepc-mockup" disabled>${ICON.chart("x").replace('class="nav-ico"', 'class="x" style="width:15px;height:15px;fill:none;stroke:#fff;stroke-width:2"')} Open fill mockup</button>
+      <button class="btn" id="mepc-data" disabled>${ICON.download()} Download copy-paste tables (.xlsx)</button>
       <button class="btn" id="mepc-xlsm" disabled>${ICON.download()} Fill official .xlsm (experimental)</button>
       <span class="muted-tag" id="mepc-note"> — load the three required files first.</span>
     </div>
@@ -152,6 +162,55 @@ function generateCard(root: HTMLElement): HTMLElement {
     finally { go.disabled = false; }
   });
 
+  card.querySelector("#mepc-mockup")!.addEventListener("click", async () => {
+    const btn = card.querySelector("#mepc-mockup") as HTMLButtonElement;
+    if (!files.tpl) { toast("Load the .xlsm calculator template first"); return; }
+    btn.disabled = true;
+    try {
+      const buf = await readBuf(files.tpl);
+      const schema = await extractMepcSchema(buf);
+      // seamless: if the SIM files are loaded but not yet processed, parse them now
+      if (!RESULT && files.base && files.prop) {
+        try {
+          RESULT = parseAll({
+            baseTxt: await readText(files.base), propTxt: await readText(files.prop),
+            rotTxts: await Promise.all(files.rot.map(readText)),
+            inpTxt: files.inp ? await readText(files.inp as File) : "",
+            qaText: (document.querySelector("#mepc-qa") as HTMLTextAreaElement)?.value || "",
+          }, log);
+          MODEL_ENV = RESULT.env;
+        } catch (e: any) { log("  (auto-parse skipped: " + e.message + ")"); }
+      }
+      const ctx = buildMockupCtx();
+      const n = autofillSchema(schema, ctx);
+      const m = autofillModeling(schema, RESULT);   // map the parsed model onto the modeling sheets
+      const proj = store.currentProject;
+      const dKey = `mepc_draft_${proj?.id || "local"}`;
+      // restore a previously-saved draft (server for projects, else localStorage)
+      let draft = (proj as any)?.mepcDraft || null;
+      if (!draft) { try { draft = JSON.parse(localStorage.getItem(dKey) || "null"); } catch { /* ignore */ } }
+      const restored = applyDraft(schema, draft);
+      log(`Mockup: ${schema.sheets.length} sheets · auto-filled ${n + m} field(s) (${m} from the energy model)${restored ? ` · restored ${restored} from draft` : ""}.`);
+      openMepcMockup({
+        schema, xlsmBuf: buf, projectName: ctx.projectName,
+        onSaveDraft: async (sch) => {
+          const d = serializeDraft(sch);
+          if (proj) { await Projects.update(proj.id, { mepcDraft: d } as any); (proj as any).mepcDraft = d; }
+          else localStorage.setItem(dKey, JSON.stringify(d));
+        },
+        onDigest: async (digestFileList, sch, refresh) => {
+          const sources = await Promise.all(digestFileList.map(extractFileText));
+          const res = await digestFiles(sources, sch, { openaiKey: store.openaiKey, openaiModel: store.openaiModel });
+          log(`Digest: mapped ${res.mapped} field(s) from ${digestFileList.length} file(s) ${res.usedAI ? "(regex + AI)" : "(regex)"}.`);
+          refresh();
+          // keep the provenance: upload the source files to the server
+          if (proj) { try { await Projects.upload(proj.id, digestFileList, "mepc-source" as any); log(`  uploaded ${digestFileList.length} source file(s) to the project.`); } catch (e: any) { log("  (source upload skipped: " + e.message + ")"); } }
+        },
+      });
+    } catch (e: any) { log("✗ mockup: " + e.message); console.error(e); toast("Mockup failed — " + e.message); }
+    finally { btn.disabled = false; }
+  });
+
   card.querySelector("#mepc-data")!.addEventListener("click", () => {
     try { buildDataWorkbook(RESULT, log); toast("✓ Copy-paste tables downloaded"); }
     catch (e: any) { log("✗ " + e.message); console.error(e); }
@@ -178,7 +237,41 @@ function checkReady(root: HTMLElement) {
   const go = root.querySelector("#mepc-go") as HTMLButtonElement | null;
   const note = root.querySelector("#mepc-note");
   if (go) go.disabled = !ok;
-  if (note) note.textContent = ok ? " — ready." : " — load the three required files first.";
+  // the fill mockup only needs the calculator template (auto-fill uses whatever
+  // parse / project info is available; the rest is entered in the popup).
+  const mock = root.querySelector("#mepc-mockup") as HTMLButtonElement | null;
+  if (mock) mock.disabled = !files.tpl;
+  if (note) note.textContent = ok ? " — ready." : (files.tpl ? " — load the baseline & proposed .SIM to parse, or open the fill mockup now." : " — load the three required files first.");
+}
+
+/** Extract plain text from a supporting file for the digest mapping. */
+async function extractFileText(file: File): Promise<{ name: string; text: string }> {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  try {
+    if (ext === "pdf") { const buf = await readBuf(file); const pages = await loadTracePages(buf); return { name: file.name, text: pages.map((p) => p.text).join("\n") }; }
+    if (ext === "xlsx" || ext === "xls" || ext === "xlsm") { const buf = await readBuf(file); const wb = XLSX.read(buf, { type: "array" }); return { name: file.name, text: wb.SheetNames.map((n) => XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n") }; }
+    return { name: file.name, text: await readText(file) };
+  } catch { return { name: file.name, text: "" }; }
+}
+
+/** Build the auto-fill context from the parsed model (RESULT) + the current
+    project's setup info (store.projectInfo / store.currentProject). */
+function buildMockupCtx(): MepcAutofillContext {
+  const pi: any = store.projectInfo || {};
+  const proj = store.currentProject;
+  const R = RESULT;
+  const area = pi.floorArea || (R && (R.dispBase?.area || R.base?.area)) || undefined;
+  return {
+    projectName: pi.projectName || proj?.name || (R && R.proj) || undefined,
+    climateZone: pi.climateZone || (R && R.cz) || undefined,
+    conditionedArea: typeof area === "number" ? area : undefined,
+    weatherFile: (R && R.base?.weather) || undefined,
+    energyCode: pi.energyCodeStandard || undefined,
+    leedVersion: pi.leedVersion, leedType: pi.leedType, leedSubcategory: pi.leedSubcategory,
+    modelType: proj?.modelType || (R ? "equest" : undefined),
+    simulationProgram: R ? "eQuest" : undefined,
+    modeler: pi.author || undefined,
+  };
 }
 
 /* ---------- log ---------- */

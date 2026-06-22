@@ -86,7 +86,7 @@ app.post("/api/projects", authMiddleware, (req, res) => {
   const p = {
     id: uid(), ownerId: req.user.id, ownerName: req.user.name,
     name: name || "Untitled Project", address: address || "", modelType: modelType || "equest",
-    files: [], parsed: null, rates: null, ratesName: "",
+    files: [], parsed: null, rates: null, ratesName: "", projectInfo: null, setupDraft: false, mepcDraft: null,
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   db.projects.push(p); save();
@@ -95,7 +95,7 @@ app.post("/api/projects", authMiddleware, (req, res) => {
 app.put("/api/projects/:id", authMiddleware, (req, res) => {
   const p = db.projects.find((x) => x.id === req.params.id);
   if (!p || (req.user.role !== "admin" && p.ownerId !== req.user.id)) return res.status(404).json({ error: "not found" });
-  for (const k of ["name", "address", "modelType", "parsed", "rates", "ratesName"])
+  for (const k of ["name", "address", "modelType", "parsed", "rates", "ratesName", "projectInfo", "setupDraft", "mepcDraft"])
     if (k in (req.body || {})) p[k] = req.body[k];
   p.updatedAt = Date.now(); save();
   res.json({ project: p });
@@ -204,6 +204,40 @@ app.delete("/api/rate-history/:id", authMiddleware, (req, res) => {
 app.delete("/api/rate-history", authMiddleware, (req, res) => {
   db.rateHistory = db.rateHistory.filter((x) => x.ownerId !== req.user.id); save();
   res.json({ ok: true });
+});
+
+/* ---------- OPENAI PROXY (browser → server → OpenAI, avoids CORS) ---------- */
+app.post("/api/openai/chat", authMiddleware, async (req, res) => {
+  const key = req.headers["x-openai-key"] || process.env.OPENAI_API_KEY || "";
+  if (!key) return res.status(400).json({ error: "no OpenAI key" });
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify(req.body || {}),
+    });
+    const text = await r.text();
+    res.status(r.status).type("application/json").send(text);
+  } catch (e) {
+    res.status(502).json({ error: "OpenAI proxy failed: " + e.message });
+  }
+});
+
+/* ---------- ZERO TOOL PROXY (browser → server → Zero Tool, avoids CORS) ----------
+   AIA 2030 / Zero Tool baseline calculator — returns the median (benchmark) site
+   EUI for a building type + location. No auth required by the upstream API. */
+app.post("/api/zerotool/baseline", authMiddleware, async (req, res) => {
+  try {
+    const r = await fetch("https://tool.zerotool.org/baseline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body || []),
+    });
+    const text = await r.text();
+    res.status(r.status).type("application/json").send(text);
+  } catch (e) {
+    res.status(502).json({ error: "Zero Tool proxy failed: " + e.message });
+  }
 });
 
 function stripHeavy(p) {

@@ -1,0 +1,35 @@
+[
+  {
+    "buildingType": "Office",
+    "GFA": 123123,
+    "areaUnits": "ftSQ",    
+    "country": "USA",
+    "postalCode": "60190",
+    "state": "IL",
+    "reportingUnits": "us",   
+    "energies": [
+      {
+        "energyType": "grid",
+        "energyName": "Electric (Grid)",
+        "energyUnits": "KBtu",
+        "energyUse": 1232131,
+        "energyRate": null
+      },
+      {
+        "energyType": "naturalGas",
+        "energyName": "Natural Gas",
+        "energyUnits": "Therms",
+        "energyUse": 1000,
+        "energyRate": null
+      },
+      {
+        "energyType": "steam",
+        "energyName": "District Steam",
+        "energyUnits": "KBtu",
+        "energyUse": 1233,
+        "energyRate": null
+      }
+    ],
+    "renewableEnergies": null
+  }
+]

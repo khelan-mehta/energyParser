@@ -1,0 +1,11 @@
+[
+  {
+    "buildingType": "Office",
+    "GFA": 123123,
+    "areaUnits": "ftSQ",    
+    "country": "USA",
+    "postalCode": "60190",
+    "state": "IL",
+    "reportingUnits": "us"
+  }
+]

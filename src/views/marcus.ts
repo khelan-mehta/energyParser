@@ -4,6 +4,7 @@
  *  logs → Project Analysis → utility rates → AI search.
  * ============================================================ */
 import { store, emit, logClear, logLine } from "../store";
+import type { ProjectInfo } from "../store";
 import { Projects, Rates, Project, RateSet } from "../api";
 import { h, esc, toast, fmt, fmtCompact } from "../ui/util";
 import { ICON } from "../ui/icons";
@@ -13,9 +14,10 @@ import { loadTracePages } from "../engine/trace-load";
 import { parseTrace, traceModels } from "../engine/trace";
 import type { TraceReport } from "../engine/trace";
 import { geocodeAddress, subregionFor, espmElecCarbonPerKwh, ESPM_GAS_KG_PER_THERM, ESPM_SOURCE } from "../engine/rates";
-import { gatherElectricity, gatherGas, gatherCarbon, pickMax, GatherOpts } from "../engine/sources";
+import { gatherElectricity, gatherGas, gatherCarbon, pickMax, GatherOpts, openaiChat } from "../engine/sources";
 import { enrichRow } from "../engine/enrich";
 import { buildWorkbook, downloadWorkbook } from "../engine/workbook";
+import { calcBenchmarkEui, guessBuildingType, ZT_BUILDING_TYPES } from "../engine/zerotool";
 import { COLUMNS } from "../engine/columns";
 import { renderAnalysis } from "./analysis";
 import { navigate } from "../ui/shell";
@@ -104,6 +106,7 @@ function openProjectObj(root: HTMLElement, project: Project) {
   if (project.parsed) { store.blRows = project.parsed.bl || []; store.propRows = project.parsed.prop || []; }
   else { store.blRows = []; store.propRows = []; }
   if (project.rates) store.rates = { ...store.rates, ...project.rates };
+  store.projectInfo = (project as any).projectInfo || null;
   emit(); rerender(root);
 }
 
@@ -118,6 +121,7 @@ function renderWorkspace(root: HTMLElement, p: Project) {
       </div>
       <div class="actions">
         <button class="btn" id="mk-edit">Edit</button>
+        <button class="btn ${(p as any).setupDraft && store.blRows.length + store.propRows.length ? "" : "hide"}" id="mk-resume">${ICON.rates("x")} Resume setup</button>
         <button class="btn btn-primary ${store.blRows.length + store.propRows.length ? "" : "hide"}" id="mk-export">${ICON.download()} Export Excel</button>
       </div>
     </div>
@@ -126,7 +130,7 @@ function renderWorkspace(root: HTMLElement, p: Project) {
     [
       "Pick the <b>model type</b> below (eQUEST / TRACE / IES-VE) to match your files.",
       "Upload the baseline &amp; proposed <b>.SIM / .inp</b> (or the TRACE report PDF) and hit <b>Parse</b>.",
-      "Review <b>Project Analysis</b>, confirm the <b>Utility Rates</b>, then <b>Export Excel</b>.",
+      "Complete the one <b>Project Setup</b> popup — rates, model assignment &amp; Project Info (or <b>Save as draft</b>), then <b>Export Excel</b>.",
       "Use <b>AI Search</b> to pull any value out of the parsed model.",
     ],
     [
@@ -139,10 +143,15 @@ function renderWorkspace(root: HTMLElement, p: Project) {
 
   root.querySelector("#mk-back")!.addEventListener("click", () => { store.currentProject = null; rerender(root); });
   root.querySelector("#mk-edit")!.addEventListener("click", () => editProjectModal(root, p));
+  root.querySelector("#mk-resume")?.addEventListener("click", () => {
+    if (!store.blRows.length && !store.propRows.length) { toast("Parse a model first"); return; }
+    runSetup(root, p, modelsFromStore(), null);
+  });
   root.querySelector("#mk-export")?.addEventListener("click", async () => {
     try {
-      const wb = await buildWorkbook(store.blRows, store.propRows, store.rates, { projectName: p.name });
-      downloadWorkbook(wb, `${p.name.replace(/\W+/g, "_")}_energy_results.xlsx`);
+      const info = store.projectInfo || { projectName: p.name };
+      const wb = await buildWorkbook(store.blRows, store.propRows, store.rates, { projectName: p.name, projectInfo: info });
+      downloadWorkbook(wb, `${excelName(info.projectName || p.name)}.xlsx`);
       toast("✓ Excel downloaded");
     } catch (e: any) { toast("Export failed — " + e.message); }
   });
@@ -226,13 +235,17 @@ async function parseProject(root: HTMLElement, p: Project) {
   const setProg = (x: number, label: string) => { bar.style.width = x + "%"; pp.textContent = x + "%"; pl.textContent = label; };
   prog.classList.remove("hide");
   try {
-    // ── Phase 1 — read ONLY the utility-rate table. The model's results can't be
-    //    costed until rates are chosen, so we surface them before parsing values. ──
+    // ── Phase 1 — pre-read the model's own utility rates (if any), so the setup
+    //    popup can offer them and never overwrite them with a fetch. ──
     let modelRates: ModelRates | null = null;
     let report: TraceReport | null = null;
+    let models: ParsedModel[] = [];
     if (p.modelType === "equest") {
-      setProg(40, "Reading utility rates…");
+      setProg(40, "Reading model…");
       modelRates = await readEquestModelRates(p);
+      setProg(60, "Parsing eQUEST models…");
+      models = await parseEquestModels(p);
+      setProg(100, "Parsed");
     } else if (p.modelType === "trace") {
       const pdf = p.files.find((f) => f.ext === ".pdf");
       if (!pdf) throw new Error("upload a TRACE PDF first");
@@ -242,32 +255,15 @@ async function parseProject(root: HTMLElement, p: Project) {
       // Section 1.5 (Table EAp2-3) supplies the model's utility rates — prefer proposed, else baseline
       const u = report.utilityRates;
       if (u) modelRates = { elec: u.elecProposed || u.elecBaseline, gas: u.gasProposed || u.gasBaseline, descr: u.description };
-    } else throw new Error("IES-VE parser is under development");
-    prog.classList.add("hide");
-
-    // ── Phase 2 — utility-rate gate. Closing it aborts: no rates → no parse. ──
-    const ratesOk = await ratesGateModal(p, modelRates);
-    if (!ratesOk) { logLine(`<span class="dim">› cancelled — set the utility rates to parse model values</span>`); paintLog(); return; }
-
-    // ── Phase 3 — now parse the full model values, with rates already locked in. ──
-    prog.classList.remove("hide");
-    let models: ParsedModel[] = [];
-    if (p.modelType === "equest") {
-      setProg(60, "Parsing eQUEST models…");
-      models = await parseEquestModels(p);
-      setProg(100, "Parsed");
-    } else if (report) {
       // Section 1.6 supplies the baseline's 0/90/180/270 rotations — expand & pre-tag them
       models = traceModels(report).map((m) => ({ name: m.name, row: m.row, cat: m.cat, rot: m.rot }));
-    }
+    } else throw new Error("IES-VE parser is under development");
     prog.classList.add("hide");
     if (!models.length) throw new Error("no models parsed — check the uploaded files");
-    logLine(`<span class="ok">✓ Parsed ${models.length} model(s) — assign each below</span>`); paintLog();
+    logLine(`<span class="ok">✓ Parsed ${models.length} model(s) — complete the setup below</span>`); paintLog();
 
-    // ── Phase 4 — human-in-the-loop assignment, then Phase 5 — calculate. ──
-    const assigned = await assignModal(models);
-    if (!assigned) { logLine(`<span class="dim">› assignment cancelled</span>`); paintLog(); return; }
-    finishParse(root, p, assigned.bl, assigned.prop);
+    // ── Phase 2 — the single setup popup (rates + assignment + project info). ──
+    await runSetup(root, p, models, modelRates);
   } catch (e: any) {
     prog.classList.add("hide");
     logLine(`<span class="err">✗ ${esc(e.message)}</span>`);
@@ -327,188 +323,40 @@ function guessClass(name: string): { cat: "leed" | "code" | "proposed"; rot: num
   return { cat, rot: m ? +m[1] : 0 };
 }
 
-/* ---------- rate gate + classification modals (human in the loop) ---------- */
+/* ---------- combined setup popup (rates + assignment + project info) ---------- */
 type ModelRates = { elec: number; gas: number; descr: string };
 
-/** STEP 1 — utility-rate gate. Resolves the chosen rates into store.rates and
-    returns true; returns false if the user closes it (which aborts the parse,
-    since model results can't be costed without rates). */
-function ratesGateModal(p: Project, modelRates: ModelRates | null): Promise<boolean> {
-  return new Promise((resolve) => { (async () => {
-    const c = store.rates;
-    // Pull the user's saved utility-rate sets so they can be reused during parsing.
-    let savedSets: RateSet[] = [];
-    try { const res = await Rates.list(); savedSets = (res.rateSets || []) as RateSet[]; } catch { /* offline / unauth — just hide the option */ }
-    savedSets.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-    // Default rate source: model rates → a saved set → finder (if already set) → manual
-    const defSrc = modelRates ? "model" : (savedSets.length ? "saved" : (c.elec_per_kwh != null ? "finder" : "manual"));
-    const overlay = h(`
-      <div class="modal-overlay"><div class="modal" style="max-width:560px"><div class="modal-hd"><h3>Utility rates</h3><span class="x">${ICON.close("x")}</span></div>
-        <div class="modal-body">
-          <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Set the utility rates <b>before</b> parsing — the model's energy results can't be costed until these are chosen. They populate the Project Info sheet and drive every cost &amp; carbon calculation.</p>
-          <div class="field" style="margin-bottom:14px"><label>Pincode / ZIP</label><input id="cm-zip" placeholder="e.g. 92054" value="${esc(c.pincode || "")}" /><div style="font-size:11px;color:var(--g400);margin-top:4px">Maps to an EPA eGRID subregion for the carbon factor (ENERGY STAR Portfolio Manager).</div></div>
-          <div style="font-family:var(--font);font-weight:800;font-size:14px;margin-bottom:4px">Utility rates → Project Info</div>
-          <p style="font-size:11.5px;color:var(--g500);margin-bottom:10px">Used to compute the energy rates on the Project Info sheet.</p>
-          <select class="unit-pick" id="cm-ratesrc" style="width:100%">
-            <option value="model" ${defSrc === "model" ? "selected" : ""} ${modelRates ? "" : "disabled"}>From the energy model${modelRates ? "" : " — not found"}</option>
-            <option value="saved" ${defSrc === "saved" ? "selected" : ""} ${savedSets.length ? "" : "disabled"}>Saved utility rate set${savedSets.length ? ` (${savedSets.length})` : " — none saved"}</option>
-            <option value="finder" ${defSrc === "finder" ? "selected" : ""}>Our utility-rate finder (from project address)</option>
-            <option value="manual" ${defSrc === "manual" ? "selected" : ""}>Enter manually</option>
-          </select>
-          <div id="cm-rate-detail" style="margin-top:10px"></div>
-          <button class="btn btn-primary" id="cm-go" style="width:100%;justify-content:center;margin-top:16px">${ICON.bolt()} Use these rates → parse model</button>
-          <div id="cm-status" style="font-size:12px;color:var(--g500);margin-top:8px;text-align:center"></div>
-        </div></div></div>`);
-    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
-    let done = false;
-    const close = (result: boolean) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(result); };
-    overlay.querySelector(".x")!.addEventListener("click", () => close(false));
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(false); });
+const LEED_VERSIONS = ["None", "LEED v2009", "LEED v4", "LEED v4 Energy Update", "LEED v4.1", "LEED v5 (registered before 1/1/2028)", "LEED v5 (registered after 1/1/2028)"];
+const LEED_TYPES = ["New Construction", "Major Renovation", "Core and Shell"];
+const LEED_SUBCATS = ["All but Healthcare + Schools", "Healthcare", "School"];
+const YES_NO = ["Yes", "No"];
 
-    const detail = overlay.querySelector("#cm-rate-detail") as HTMLElement;
-    const num = (v: any) => (v != null ? v : "");
-    const setBrief = (rs: RateSet) => {
-      const e = rs.config?.elec_per_kwh, g = rs.config?.gas_per_therm;
-      return [e != null ? `$${fmt(e, 4)}/kWh` : null, g != null ? `$${fmt(g, 4)}/therm` : null].filter(Boolean).join(" · ") || "no rates";
-    };
-    const renderDetail = (src: string) => {
-      if (src === "model" && modelRates) {
-        detail.innerHTML = `<div class="source-note" style="border-left-color:var(--g300)">Electricity <b>$${fmt(modelRates.elec, 4)}/kWh</b> · Natural Gas <b>$${fmt(modelRates.gas, 4)}/therm</b>${modelRates.descr ? ` <span style="color:var(--g400)">(${esc(modelRates.descr)})</span>` : ""}</div>`;
-      } else if (src === "saved") {
-        detail.innerHTML = `<select class="unit-pick" id="cm-saved" style="width:100%">${savedSets.map((rs, i) => `<option value="${rs.id}" ${i === 0 ? "selected" : ""}>${esc(rs.name)} — ${esc(setBrief(rs))}</option>`).join("")}</select><div id="cm-saved-note" style="margin-top:8px"></div>`;
-        const sel = detail.querySelector("#cm-saved") as HTMLSelectElement;
-        const note = detail.querySelector("#cm-saved-note") as HTMLElement;
-        const paint = () => { const rs = savedSets.find((x) => x.id === sel.value); if (!rs) return; const loc = rs.config?.location_name || rs.config?.state || ""; note.innerHTML = `<div class="source-note" style="border-left-color:var(--g300)">${esc(setBrief(rs))}${loc ? ` <span style="color:var(--g400)">· ${esc(String(loc))}</span>` : ""}</div>`; };
-        sel.addEventListener("change", paint); paint();
-      } else if (src === "finder") {
-        detail.innerHTML = `<div class="source-note" style="border-left-color:var(--g300)">Sources electricity, gas &amp; carbon for <b>${esc(p.address || "the project address")}</b> via NREL / EIA / Cambium when you click the button.</div>`;
-      } else {
-        detail.innerHTML = `<div class="grid cards-3" style="gap:10px">
-          <div class="field"><label>Electricity ($/kWh)</label><input id="cm-elec" type="number" step="0.001" value="${num(c.elec_per_kwh)}" placeholder="0.137" /></div>
-          <div class="field"><label>Natural Gas ($/therm)</label><input id="cm-gas" type="number" step="0.001" value="${num(c.gas_per_therm)}" placeholder="0.49" /></div>
-          <div class="field"><label>Carbon (kg CO2e/kWh)</label><input id="cm-carbon" type="number" step="0.001" value="${num(c.elec_carbon_per_kwh)}" placeholder="0.45" /></div>
-        </div>`;
-      }
-    };
-    const srcSel = overlay.querySelector("#cm-ratesrc") as HTMLSelectElement;
-    srcSel.addEventListener("change", () => renderDetail(srcSel.value));
-    renderDetail(defSrc);
-
-    overlay.querySelector("#cm-go")!.addEventListener("click", async () => {
-      const go = overlay.querySelector("#cm-go") as HTMLButtonElement;
-      const status = overlay.querySelector("#cm-status") as HTMLElement;
-      go.disabled = true;
-      try {
-        const src = srcSel.value;
-        let manualCarbon = false;
-        if (src === "model" && modelRates) {
-          c.elec_per_kwh = modelRates.elec; c.gas_per_therm = modelRates.gas;
-          c.rate_structure = "from model"; c.rate_source = `Energy model${modelRates.descr ? ` — ${modelRates.descr}` : ""}`;
-        } else if (src === "saved") {
-          const id = (overlay.querySelector("#cm-saved") as HTMLSelectElement)?.value;
-          const rs = savedSets.find((x) => x.id === id);
-          if (!rs) throw new Error("pick a saved rate set");
-          Object.assign(store.rates, rs.config);
-        } else if (src === "finder") {
-          status.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Finding utility rates…`;
-          await autoFindRates(p);
-        } else {
-          const g = (id: string) => { const v = (overlay.querySelector(id) as HTMLInputElement)?.value.trim(); return v === "" ? null : +v; };
-          const e = g("#cm-elec"), ga = g("#cm-gas"), cb = g("#cm-carbon");
-          if (e != null) { c.elec_per_kwh = e; c.rate_source = "Manually entered"; c.rate_structure = "manual"; }
-          if (ga != null) c.gas_per_therm = ga;
-          if (cb != null) { c.elec_carbon_per_kwh = cb; c.carbon_method = "manual"; c.carbon_source = "Manually entered"; manualCarbon = true; }
-        }
-
-        // Pincode → eGRID subregion → ENERGY STAR Portfolio Manager grid carbon factor.
-        // (A manually-entered carbon value wins; otherwise ESPM populates it.)
-        const zip = (overlay.querySelector("#cm-zip") as HTMLInputElement)?.value.trim() || "";
-        if (zip) c.pincode = zip;
-        if (!manualCarbon) {
-          if (!c.state && (zip || c.pincode)) {
-            status.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Looking up grid region…`;
-            try { const info = await geocodeAddress({ pincode: zip || c.pincode }); if (info.state) { c.state = info.state; c.lat = info.lat; c.lon = info.lon; } } catch { /* offline — fall through */ }
-          }
-          const sub = subregionFor(c.state || "", zip || c.pincode);
-          if (sub) {
-            c.elec_carbon_per_kwh = espmElecCarbonPerKwh(sub);
-            c.gas_carbon_per_therm = ESPM_GAS_KG_PER_THERM;
-            c.carbon_method = "manual";
-            c.carbon_source = `${ESPM_SOURCE} · eGRID ${sub}`;
-          }
-        }
-        emit();
-        close(true);
-      } catch (e: any) {
-        status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`;
-        go.disabled = false;
-      }
-    });
-  })(); });
+/** Build a download-safe base filename: "<project>_Energy Results Comparision". */
+function excelName(name: string): string {
+  const clean = String(name || "Project").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  return `${clean}_Energy Results Comparision`;
 }
 
-/** STEP 2 — human-in-the-loop model assignment (category + rotation). Resolves
-    the parsed models split into baseline / proposed rows, or null if cancelled. */
-function assignModal(models: ParsedModel[]): Promise<{ bl: Row[]; prop: Row[] } | null> {
-  return new Promise((resolve) => {
-    const rowHtml = (m: ParsedModel, i: number) => {
-      const g = guessClass(m.name);
-      const cat = m.cat ?? g.cat;          // engine-supplied (e.g. TRACE §1.6 rotations) wins over the name guess
-      const rot = m.rot ?? g.rot;
-      const rotSel = `<select class="unit-pick cm-rot" data-i="${i}" ${cat === "proposed" ? "disabled" : ""}>${[0, 90, 180, 270].map((d) => `<option value="${d}" ${d === rot ? "selected" : ""}>${d}°</option>`).join("")}</select>`;
-      return `<div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;align-items:center;margin-bottom:9px">
-        <div style="font-size:12.5px;font-weight:600;word-break:break-word">${esc(m.name)}</div>
-        <select class="unit-pick cm-cat" data-i="${i}">
-          <option value="leed" ${cat === "leed" ? "selected" : ""}>LEED Baseline</option>
-          <option value="code" ${cat === "code" ? "selected" : ""}>Code Baseline</option>
-          <option value="proposed" ${cat === "proposed" ? "selected" : ""}>Proposed</option>
-        </select>${rotSel}</div>`;
-    };
-    const overlay = h(`
-      <div class="modal-overlay"><div class="modal" style="max-width:680px"><div class="modal-hd"><h3>Assign models</h3><span class="x">${ICON.close("x")}</span></div>
-        <div class="modal-body">
-          <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Tell us what each parsed model is. <b>LEED</b> rotations fill the first 4 rows of <b>BL Data</b> (0°/90°/180°/270°), <b>Code</b> rotations the next 4; <b>Proposed</b> cases fill the <b>Proposed Data</b> sheet (rotations are averaged).</p>
-          <div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:8px"><div>Model</div><div>Category</div><div>Rotation</div></div>
-          ${models.map(rowHtml).join("")}
-          <button class="btn btn-primary" id="cm-go" style="width:100%;justify-content:center;margin-top:16px">${ICON.bolt()} Populate</button>
-        </div></div></div>`);
-    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
-    let done = false;
-    const close = (result: { bl: Row[]; prop: Row[] } | null) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(result); };
-    overlay.querySelector(".x")!.addEventListener("click", () => close(null));
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
-    overlay.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((sel) => sel.addEventListener("change", () => {
-      (overlay.querySelector(`.cm-rot[data-i="${sel.dataset.i}"]`) as HTMLSelectElement).disabled = sel.value === "proposed";
-    }));
-
-    overlay.querySelector("#cm-go")!.addEventListener("click", () => {
-      const bl: Row[] = [], prop: Row[] = [];
-      models.forEach((m, i) => {
-        const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
-        const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
-        m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
-        (cat === "proposed" ? prop : bl).push(m.row);
-      });
-      close({ bl, prop });
-    });
-  });
+/** Reconstruct the parsed-model list from the rows already in the store (used to
+    re-open the setup popup when resuming a draft, without re-parsing the files). */
+function modelsFromStore(): ParsedModel[] {
+  return [...store.blRows, ...store.propRows].map((r) => ({
+    name: r.option_name || r.results_path || "Model",
+    row: r, cat: r._cat as any, rot: r._rot as number,
+  }));
 }
 
-/** Source electricity / gas / carbon for the project via our rate finder. */
-async function autoFindRates(p: Project) {
+/** Pull the utility rates that AREN'T in the energy model from all our sources
+    (NREL / EIA / Cambium for $/kWh & $/therm, eGRID for the carbon factor), keyed
+    by pincode. Returns the values; the caller fills only the non-model fields. */
+async function fetchRatesForPincode(pincode: string): Promise<{ elec?: number; gas?: number; carbon?: number; state?: string }> {
   const c = store.rates;
-  if (c.lat == null || !c.state) {
-    if (!p.address) throw new Error("project has no address — add one or use the Utility Rates tab");
-    const info = await geocodeAddress({ city: p.address });
-    c.state = info.state; c.lat = info.lat; c.lon = info.lon;
-    c.location_name = (info as any).location_name || p.address;
-    if ((info as any).city) c.city = (info as any).city;
-    if ((info as any).country) c.country = (info as any).country;
-  }
+  let state = c.state, lat = c.lat, lon = c.lon;
+  try { const info = await geocodeAddress({ pincode }); if (info.state) { state = info.state; lat = info.lat; lon = info.lon; } } catch { /* offline — fall through */ }
   const o: GatherOpts = {
-    state: c.state, lat: c.lat, lon: c.lon, nrelKey: store.nrelKey, eiaKey: store.eiaKey,
+    state, lat, lon, nrelKey: store.nrelKey, eiaKey: store.eiaKey,
     openaiKey: store.openaiKey, openaiModel: store.openaiModel,
-    locationText: c.location_name || c.state, touProfile: c.tou_profile,
+    locationText: c.location_name || state, touProfile: c.tou_profile,
   };
   const [e, g, cb] = await Promise.all([
     gatherElectricity(o).catch(() => ({ candidates: [], errors: [] })),
@@ -516,10 +364,291 @@ async function autoFindRates(p: Project) {
     gatherCarbon(o).catch(() => ({ candidates: [], errors: [] })),
   ]);
   const me = pickMax(e.candidates), mg = pickMax(g.candidates), mc = pickMax(cb.candidates);
-  if (me) { c.elec_per_kwh = me.value; c.rate_source = `${me.source} (ref: ${me.url})`; c.rate_structure = me.live ? "aggregated (live)" : "aggregated (ref)"; }
-  if (mg) { c.gas_per_therm = mg.value; c.gas_source = `${mg.source} (ref: ${mg.url})`; }
-  if (mc) { c.elec_carbon_per_kwh = mc.value; c.carbon_method = "manual"; c.carbon_source = `${mc.source} (ref: ${mc.url})`; }
-  if (!me && !mg && !mc) throw new Error("no rates found for this location");
+  let carbon = mc ? mc.value : undefined;
+  if (carbon == null) { const sub = subregionFor(state || "", pincode); if (sub) carbon = espmElecCarbonPerKwh(sub); }
+  return { elec: me?.value, gas: mg?.value, carbon, state };
+}
+
+/** Small sub-prompt for the Benchmark-EUI Calculate button: asks the AIA 2030
+    target percentage and confirms the Zero Tool building type. Resolves the chosen
+    values, or null if cancelled. */
+function benchmarkCalcModal(defType: string, defTarget: number): Promise<{ buildingType: string; targetPercent: number } | null> {
+  return new Promise((resolve) => {
+    const opts = ZT_BUILDING_TYPES.map((b) => `<option value="${esc(b)}" ${b === defType ? "selected" : ""}>${esc(b)}</option>`).join("");
+    const overlay = h(`
+      <div class="modal-overlay"><div class="modal" style="max-width:440px"><div class="modal-hd"><h3>Calculate Benchmark EUI</h3><span class="x">${ICON.close("x")}</span></div>
+        <div class="modal-body">
+          <p style="font-size:12.5px;color:var(--g500);margin-bottom:14px">Uses the AIA 2030 / Zero Tool baseline calculator with this project's floor area &amp; location. Confirm the building type and enter your target reduction.</p>
+          <div class="field" style="margin-bottom:12px"><label>Building type (Zero Tool)</label><select class="unit-pick" id="bc-type" style="width:100%">${opts}</select></div>
+          <div class="field"><label>AIA 2030 Target Savings (% better than median)</label><input id="bc-target" type="number" step="0.1" min="0" max="100" value="${esc(String(defTarget))}" placeholder="90" /></div>
+          <button class="btn btn-primary" id="bc-go" style="width:100%;justify-content:center;margin-top:18px">${ICON.bolt()} Calculate benchmark EUI</button>
+        </div></div></div>`);
+    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+    let done = false;
+    const close = (r: { buildingType: string; targetPercent: number } | null) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(r); };
+    overlay.querySelector(".x")!.addEventListener("click", () => close(null));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+    overlay.querySelector("#bc-go")!.addEventListener("click", () => {
+      const buildingType = (overlay.querySelector("#bc-type") as HTMLSelectElement).value;
+      const tv = (overlay.querySelector("#bc-target") as HTMLInputElement).value.trim();
+      close({ buildingType, targetPercent: tv === "" ? 90 : +tv });
+    });
+  });
+}
+
+export type SetupResult = { action: "finish" | "draft"; bl: Row[]; prop: Row[]; info: ProjectInfo } | null;
+
+/** The single human-in-the-loop popup shown after parsing. It bundles everything
+    that drives the workbook into one savable form:
+      • Utility rates — a pincode + Fetch button that pulls any rate NOT supplied by
+        the model from all sources; fetched values are editable and never replace
+        the model's own rates.
+      • Model assignment — category (LEED / Code / Proposed) + rotation per model.
+      • Project Info — the full sheet incl. the Performance Goals table + QA/QC.
+    Applies the rates to store.rates and resolves the rows + ProjectInfo with the
+    chosen action ("finish" or "draft"), or null if the user closes it. */
+function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | null): Promise<SetupResult> {
+  return new Promise((resolve) => {
+    const c = store.rates;
+    const prev = store.projectInfo || {};
+    // a "from the model" rate must never be overwritten by a fetch
+    const fromModel = !!modelRates || c.rate_structure === "from model";
+    const elec0 = modelRates?.elec ?? c.elec_per_kwh;
+    const gas0 = modelRates && modelRates.gas > 0 ? modelRates.gas : c.gas_per_therm;
+    const carbon0 = c.elec_carbon_per_kwh;
+
+    // ---- auto-populate Project Info from the proposed model (falls back to first)
+    const sample = (models.find((m) => (m.cat ?? guessClass(m.name).cat) === "proposed")?.row) || models[0]?.row;
+    const area = prev.floorArea ?? (sample?.conditioned_floor_area || sample?.total_floor_area);
+    const d = {
+      projectName: prev.projectName ?? p.name,
+      climateZone: prev.climateZone ?? (sample?.climate_zone != null ? String(sample.climate_zone) : ""),
+      programType: prev.programType ?? "",
+      floorArea: typeof area === "number" && area > 0 ? area : undefined,
+      benchmarkEui: prev.benchmarkEui,
+      targetSavings: prev.targetSavings ?? 0.9,
+      leedVersion: prev.leedVersion ?? "LEED v4",
+      leedType: prev.leedType ?? "New Construction",
+      leedSubcategory: prev.leedSubcategory ?? "School",
+      energyCodeStandard: prev.energyCodeStandard ?? "ASHRAE 2010/IECC 2012",
+      energyCodeProcessLoads: prev.energyCodeProcessLoads ?? "Yes",
+      author: prev.author ?? "",
+      date: prev.date ?? "",
+      uncertaintyFactor: prev.uncertaintyFactor ?? 0,
+    };
+    const sel = (id: string, opts: string[], val: string) =>
+      `<select class="unit-pick" id="${id}" style="width:100%">${opts.map((o) => `<option value="${esc(o)}" ${o === val ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    const txt = (id: string, val: any, ph = "") => `<input id="${id}" value="${val == null ? "" : esc(String(val))}" placeholder="${esc(ph)}" />`;
+    const numf = (id: string, val: any, step = "any", ph = "") => `<input id="${id}" type="number" step="${step}" value="${val == null ? "" : esc(String(val))}" placeholder="${esc(ph)}" />`;
+    const pctf = (id: string, frac: any) => numf(id, frac != null ? +(frac * 100).toFixed(2) : "", "0.1", "%");
+
+    // ---- model assignment rows
+    const asgHtml = models.map((m, i) => {
+      const g = guessClass(m.name);
+      const cat = m.cat ?? g.cat;          // engine-supplied (e.g. TRACE §1.6 rotations) wins over the name guess
+      const rot = m.rot ?? g.rot;
+      const rotSel = `<select class="unit-pick cm-rot" data-i="${i}" ${cat === "proposed" ? "disabled" : ""}>${[0, 90, 180, 270].map((deg) => `<option value="${deg}" ${deg === rot ? "selected" : ""}>${deg}°</option>`).join("")}</select>`;
+      return `<div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;align-items:center;margin-bottom:9px">
+        <div style="font-size:12.5px;font-weight:600;word-break:break-word">${esc(m.name)}</div>
+        <select class="unit-pick cm-cat" data-i="${i}">
+          <option value="leed" ${cat === "leed" ? "selected" : ""}>LEED Baseline</option>
+          <option value="code" ${cat === "code" ? "selected" : ""}>Code Baseline</option>
+          <option value="proposed" ${cat === "proposed" ? "selected" : ""}>Proposed</option>
+        </select>${rotSel}</div>`;
+    }).join("");
+
+    const sec = (t: string) => `<div style="font-family:var(--font);font-weight:800;font-size:13px;margin:16px 0 8px;padding-top:12px;border-top:1px solid var(--g150)">${t}</div>`;
+    const modelNote = fromModel ? ` <span style="color:var(--g400);font-weight:400">(from model — kept)</span>` : "";
+
+    const overlay = h(`
+      <div class="modal-overlay"><div class="modal" style="max-width:720px"><div class="modal-hd"><h3>Project setup</h3><span class="x">${ICON.close("x")}</span></div>
+        <div class="modal-body" style="max-height:74vh;overflow:auto">
+          <p style="font-size:12.5px;color:var(--g500);margin-bottom:6px">Everything that drives the workbook in one place. Confirm or edit, then <b>Populate</b> — or <b>Save as draft</b> to finish later. Values are written straight into the <b>Project Info</b> sheet.</p>
+
+          <div style="font-family:var(--font);font-weight:800;font-size:13px;margin:6px 0 8px">Utility rates</div>
+          <div class="field" style="margin-bottom:10px"><label>Pincode / ZIP</label>
+            <div style="display:flex;gap:8px">
+              <input id="setup-zip" placeholder="e.g. 92054" value="${esc(c.pincode || "")}" style="flex:1" />
+              <button class="btn btn-sm" id="setup-fetch" type="button">${ICON.rates("x")} Fetch</button>
+            </div>
+            <div style="font-size:11px;color:var(--g400);margin-top:4px">Fetch pulls any rate not in the model from NREL / EIA / Cambium + eGRID. Fetched values are editable; model rates are kept.</div>
+          </div>
+          <div class="grid cards-3" style="gap:10px">
+            <div class="field"><label>Electricity ($/kWh)${modelNote}</label>${numf("setup-elec", elec0, "0.001", "0.137")}</div>
+            <div class="field"><label>Natural Gas ($/therm)${modelNote}</label>${numf("setup-gas", gas0, "0.001", "0.49")}</div>
+            <div class="field"><label>Carbon (kg CO2e/kWh)</label>${numf("setup-carbon", carbon0, "0.001", "0.45")}</div>
+          </div>
+          <div id="setup-rate-status" style="font-size:12px;color:var(--g500);margin-top:6px"></div>
+
+          ${sec("Model assignment")}
+          <p style="font-size:11.5px;color:var(--g500);margin:-4px 0 10px"><b>LEED</b> rotations fill BL Data rows 1–4 (0/90/180/270°), <b>Code</b> the next 4; <b>Proposed</b> cases go to Proposed Data (rotations averaged).</p>
+          <div style="display:grid;grid-template-columns:1fr 148px 84px;gap:10px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:8px"><div>Model</div><div>Category</div><div>Rotation</div></div>
+          ${asgHtml}
+
+          ${sec("Project information")}
+          <div class="grid cards-2" style="gap:10px">
+            <div class="field"><label>Project Name</label>${txt("pi-name", d.projectName)}</div>
+            <div class="field"><label>ASHRAE Climate Zone</label>${txt("pi-cz", d.climateZone, "e.g. 3B")}</div>
+            <div class="field"><label>Program Type <span style="color:var(--g400)">(optional)</span></label>${txt("pi-prog", d.programType, "e.g. Office, School")}</div>
+            <div class="field"><label>Gross Conditioned Floor Area (ft²)</label>${numf("pi-area", d.floorArea, "1", "13652")}</div>
+          </div>
+
+          ${sec("Baseline information")}
+          <div class="grid cards-2" style="gap:10px">
+            <div class="field"><label>AIA 2030 Benchmark EUI (kBtu/ft²)</label>
+              <div style="display:flex;gap:8px">
+                <input id="pi-bmeui" type="number" step="0.1" value="${d.benchmarkEui == null ? "" : esc(String(d.benchmarkEui))}" placeholder="from Zero Tool" style="flex:1" />
+                <button class="btn btn-sm" id="pi-bmeui-calc" type="button">${ICON.bolt()} Calculate</button>
+              </div>
+              <div id="pi-bmeui-status" style="font-size:11px;color:var(--g400);margin-top:4px">AIA 2030 / Zero Tool benchmark from building type + location.</div>
+            </div>
+            <div class="field"><label>AIA 2030 Target Savings (%)</label>${pctf("pi-target", d.targetSavings)}</div>
+            <div class="field"><label>LEED Version</label>${sel("pi-leedver", LEED_VERSIONS, d.leedVersion)}</div>
+            <div class="field"><label>LEED Type</label>${sel("pi-leedtype", LEED_TYPES, d.leedType)}</div>
+            <div class="field"><label>LEED Subcategory</label>${sel("pi-leedsub", LEED_SUBCATS, d.leedSubcategory)}</div>
+            <div class="field"><label>Energy Code Standard</label>${txt("pi-code", d.energyCodeStandard)}</div>
+            <div class="field"><label>Energy Code Includes Process Loads?</label>${sel("pi-procload", YES_NO, d.energyCodeProcessLoads)}</div>
+          </div>
+
+          ${sec("Performance goals")}
+          <div style="display:grid;grid-template-columns:1fr 120px 120px;gap:10px;align-items:center;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--g400);margin-bottom:6px"><div></div><div>LEED</div><div>Code</div></div>
+          <div style="display:grid;grid-template-columns:1fr 120px 120px;gap:10px;align-items:center;margin-bottom:8px"><div style="font-size:12.5px;font-weight:600">Energy Savings Goal (%)</div>${pctf("pi-egl", prev.energyGoalLeed)}${pctf("pi-egc", prev.energyGoalCode)}</div>
+          <div style="display:grid;grid-template-columns:1fr 120px 120px;gap:10px;align-items:center;margin-bottom:8px"><div style="font-size:12.5px;font-weight:600">Carbon Savings Goal (%)</div>${pctf("pi-cgl", prev.carbonGoalLeed)}${pctf("pi-cgc", prev.carbonGoalCode)}</div>
+          <div style="display:grid;grid-template-columns:1fr 120px 120px;gap:10px;align-items:center;margin-bottom:8px"><div style="font-size:12.5px;font-weight:600">Energy Cost Savings Goal (%)</div>${pctf("pi-ecl", prev.costGoalLeed)}${pctf("pi-ecc", prev.costGoalCode)}</div>
+
+          ${sec("QA/QC")}
+          <div class="grid cards-3" style="gap:10px">
+            <div class="field"><label>Author</label>${txt("pi-author", d.author)}</div>
+            <div class="field"><label>Date</label>${txt("pi-date", d.date, "YYYY-MM-DD")}</div>
+            <div class="field"><label>Uncertainty Factor (%)</label>${pctf("pi-unc", d.uncertaintyFactor)}</div>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-top:20px">
+            <button class="btn" id="setup-draft" style="flex:1;justify-content:center">Save as draft</button>
+            <button class="btn btn-primary" id="setup-go" style="flex:2;justify-content:center">${ICON.bolt()} Populate</button>
+          </div>
+        </div></div></div>`);
+    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+    let done = false;
+    const close = (result: SetupResult) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(result); };
+    overlay.querySelector(".x")!.addEventListener("click", () => close(null));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+    overlay.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((s) => s.addEventListener("change", () => {
+      (overlay.querySelector(`.cm-rot[data-i="${s.dataset.i}"]`) as HTMLSelectElement).disabled = s.value === "proposed";
+    }));
+
+    // ---- Fetch rates (never overwrites the model's own electricity/gas)
+    const rstatus = overlay.querySelector("#setup-rate-status") as HTMLElement;
+    overlay.querySelector("#setup-fetch")!.addEventListener("click", async () => {
+      const btn = overlay.querySelector("#setup-fetch") as HTMLButtonElement;
+      const zip = (overlay.querySelector("#setup-zip") as HTMLInputElement).value.trim();
+      if (!zip) { rstatus.innerHTML = `<span style="color:var(--red)">enter a pincode / ZIP first</span>`; return; }
+      btn.disabled = true; rstatus.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Fetching rates from all sources…`;
+      try {
+        const got = await fetchRatesForPincode(zip);
+        store.rates.pincode = zip;
+        if (got.state) { store.rates.state = got.state; }
+        const elecEl = overlay.querySelector("#setup-elec") as HTMLInputElement;
+        const gasEl = overlay.querySelector("#setup-gas") as HTMLInputElement;
+        const carbonEl = overlay.querySelector("#setup-carbon") as HTMLInputElement;
+        const filled: string[] = [];
+        if (!fromModel && got.elec != null) { elecEl.value = String(+got.elec.toFixed(4)); filled.push("electricity"); }
+        if (!fromModel && got.gas != null) { gasEl.value = String(+got.gas.toFixed(4)); filled.push("gas"); }
+        if (got.carbon != null) { carbonEl.value = String(+got.carbon.toFixed(4)); filled.push("carbon"); }
+        rstatus.innerHTML = filled.length
+          ? `<span style="color:var(--green,#16a34a)">✓ Fetched ${filled.join(", ")} — editable${fromModel ? "; model electricity/gas kept" : ""}</span>`
+          : `<span style="color:var(--g500)">No rates found for ${esc(zip)}${fromModel ? " (model rates kept)" : ""}</span>`;
+      } catch (e: any) { rstatus.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`; }
+      btn.disabled = false;
+    });
+
+    // ---- Calculate Benchmark EUI via Zero Tool (asks the target %, then fills the field)
+    const bstatus = overlay.querySelector("#pi-bmeui-status") as HTMLElement;
+    overlay.querySelector("#pi-bmeui-calc")!.addEventListener("click", async () => {
+      const gv = (id: string) => (overlay.querySelector(id) as HTMLInputElement)?.value.trim();
+      const curTarget = (() => { const v = gv("#pi-target"); return v ? +v : (d.targetSavings != null ? +(d.targetSavings * 100).toFixed(2) : 90); })();
+      const guess = guessBuildingType(gv("#pi-prog"), gv("#pi-leedsub"));
+      const ask = await benchmarkCalcModal(guess, curTarget);
+      if (!ask) return;
+      const calcBtn = overlay.querySelector("#pi-bmeui-calc") as HTMLButtonElement;
+      calcBtn.disabled = true;
+      bstatus.innerHTML = `<span class="spinner" style="width:11px;height:11px;vertical-align:middle"></span> Calculating from Zero Tool…`;
+      try {
+        const gfa = +(gv("#pi-area") || 0);
+        const postalCode = gv("#setup-zip") || store.rates.pincode || "";
+        // need the state for the Zero Tool lookup — derive from the pincode if unknown
+        let state = store.rates.state || "";
+        if (!state && postalCode) { try { const info = await geocodeAddress({ pincode: postalCode }); if (info.state) { state = info.state; store.rates.state = state; } } catch { /* offline */ } }
+        const r = await calcBenchmarkEui({ buildingType: ask.buildingType, gfa, postalCode, state, targetPercent: ask.targetPercent });
+        (overlay.querySelector("#pi-bmeui") as HTMLInputElement).value = String(r.benchmarkEui);
+        // mirror the entered AIA 2030 target into its field
+        (overlay.querySelector("#pi-target") as HTMLInputElement).value = String(ask.targetPercent);
+        bstatus.innerHTML = `<span style="color:var(--green,#16a34a)">✓ Benchmark ${r.benchmarkEui} kBtu/ft² (${esc(ask.buildingType)}, ${esc(state || postalCode)}) · target ${ask.targetPercent}%</span>`;
+      } catch (e: any) { bstatus.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`; }
+      calcBtn.disabled = false;
+    });
+
+    // ---- gather form → result
+    const buildResult = (action: "finish" | "draft"): SetupResult => {
+      const gv = (id: string) => (overlay.querySelector(id) as HTMLInputElement)?.value.trim();
+      const gnum = (id: string) => { const v = gv(id); return v === "" || v == null ? undefined : +v; };
+      const pct = (id: string) => { const v = gnum(id); return v == null ? undefined : v / 100; };
+
+      // apply utility rates → store.rates (model rates were never overwritten above)
+      const zip = gv("#setup-zip"); if (zip) c.pincode = zip;
+      const e = gnum("#setup-elec"), ga = gnum("#setup-gas"), cb = gnum("#setup-carbon");
+      if (e != null) c.elec_per_kwh = e;
+      if (ga != null) c.gas_per_therm = ga;
+      // Persist the "from model" provenance so a later Resume + Fetch still keeps the
+      // model's own electricity/gas rates (modelRates isn't re-read on resume).
+      if (fromModel) { c.rate_structure = "from model"; if (!c.rate_source) c.rate_source = `Energy model${modelRates?.descr ? ` — ${modelRates.descr}` : ""}`; }
+      else if (e != null && !c.rate_source) { c.rate_source = "Entered / fetched in setup"; c.rate_structure = c.rate_structure || "manual"; }
+      if (cb != null) { c.elec_carbon_per_kwh = cb; c.carbon_method = "manual"; if (!c.carbon_source) c.carbon_source = "Entered / fetched in setup"; }
+      emit();
+
+      // model assignment → baseline / proposed rows
+      const bl: Row[] = [], prop: Row[] = [];
+      models.forEach((m, i) => {
+        const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
+        const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
+        m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
+        (cat === "proposed" ? prop : bl).push(m.row);
+      });
+
+      const info: ProjectInfo = {
+        projectName: gv("#pi-name") || p.name,
+        climateZone: gv("#pi-cz") || undefined,
+        programType: gv("#pi-prog") || undefined,
+        floorArea: gnum("#pi-area"),
+        benchmarkEui: gnum("#pi-bmeui"),
+        targetSavings: pct("#pi-target"),
+        leedVersion: gv("#pi-leedver") || undefined,
+        leedType: gv("#pi-leedtype") || undefined,
+        leedSubcategory: gv("#pi-leedsub") || undefined,
+        energyCodeStandard: gv("#pi-code") || undefined,
+        energyCodeProcessLoads: gv("#pi-procload") || undefined,
+        energyGoalLeed: pct("#pi-egl"), energyGoalCode: pct("#pi-egc"),
+        carbonGoalLeed: pct("#pi-cgl"), carbonGoalCode: pct("#pi-cgc"),
+        costGoalLeed: pct("#pi-ecl"), costGoalCode: pct("#pi-ecc"),
+        author: gv("#pi-author") || undefined,
+        date: gv("#pi-date") || undefined,
+        uncertaintyFactor: pct("#pi-unc"),
+      };
+      return { action, bl, prop, info };
+    };
+
+    overlay.querySelector("#setup-go")!.addEventListener("click", () => close(buildResult("finish")));
+    overlay.querySelector("#setup-draft")!.addEventListener("click", () => close(buildResult("draft")));
+  });
+}
+
+/** Open the setup popup for a project's parsed models, then commit (finish) or
+    save a draft. Used by both a fresh parse and the "Resume setup" action. */
+async function runSetup(root: HTMLElement, p: Project, models: ParsedModel[], modelRates: ModelRates | null) {
+  const res = await setupModal(p, models, modelRates);
+  if (!res) { logLine(`<span class="dim">› setup cancelled</span>`); paintLog(); return; }
+  store.projectInfo = res.info;
+  await commitParse(root, p, res.bl, res.prop, res.action === "draft");
 }
 
 /** Average proposed rotations into a single final proposed row. Numeric fields
@@ -538,17 +667,18 @@ function averageRows(rows: Row[]): Row {
   return out;
 }
 
-async function finishParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[]) {
-  // proposed rotations → one averaged final proposed
-  if (prop.length > 1) { logLine(`<span class="dim">› averaged ${prop.length} proposed rotations → 1 final proposed</span>`); prop = [averageRows(prop)]; }
+async function commitParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[], isDraft: boolean) {
+  // proposed rotations → one averaged final proposed (only when finalizing, so a
+  // resumed draft can still re-assign the individual rotations).
+  if (!isDraft && prop.length > 1) { logLine(`<span class="dim">› averaged ${prop.length} proposed rotations → 1 final proposed</span>`); prop = [averageRows(prop)]; }
   store.blRows = bl; store.propRows = prop;
-  logLine(`<span class="ok">✓ Assigned ${bl.length} baseline · ${prop.length} proposed</span>`);
+  logLine(isDraft ? `<span class="dim">› draft saved (${bl.length} baseline · ${prop.length} proposed)</span>` : `<span class="ok">✓ Assigned ${bl.length} baseline · ${prop.length} proposed</span>`);
   const summary = computeSummary(bl, prop);
-  await Projects.update(p.id, { parsed: { bl, prop, summary }, rates: store.rates, modelType: p.modelType });
-  p.parsed = { bl, prop, summary } as any; p.rates = store.rates as any;
-  emit(); toast(`✓ Populated ${bl.length + prop.length} model(s)`);
+  await Projects.update(p.id, { parsed: { bl, prop, summary }, rates: store.rates, modelType: p.modelType, projectInfo: store.projectInfo, setupDraft: isDraft } as any);
+  p.parsed = { bl, prop, summary } as any; p.rates = store.rates as any; (p as any).projectInfo = store.projectInfo; (p as any).setupDraft = isDraft;
+  emit(); toast(isDraft ? "✓ Draft saved — resume any time" : `✓ Populated ${bl.length + prop.length} model(s)`);
   rerender(root);
-  setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+  if (!isDraft) setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
 }
 function computeSummary(bl: Row[], prop: Row[]) {
   const rows = [...bl, ...prop].map((r) => enrichRow(r, store.rates));
@@ -643,19 +773,14 @@ async function aiSearch(query: string): Promise<{ answer: string; value: string;
     return o;
   });
   if (!store.openaiKey) throw new Error("no OpenAI key set (Utility Rates → settings)");
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${store.openaiKey}` },
-    body: JSON.stringify({
-      model: store.openaiModel,
-      messages: [
-        { role: "system", content: "You answer questions about a parsed building energy model. Use ONLY the provided JSON data. Reply as JSON {\"answer\":\"one sentence\",\"value\":\"the number with units, or empty\",\"where\":\"which field/model it came from\"}." },
-        { role: "user", content: `Data: ${JSON.stringify(ctx)}\n\nQuestion: ${query}` },
-      ],
-      temperature: 0, response_format: { type: "json_object" },
-    }),
-  });
-  if (!resp.ok) throw new Error(`OpenAI HTTP ${resp.status}`);
-  const data = await resp.json();
+  const data = await openaiChat({
+    model: store.openaiModel,
+    messages: [
+      { role: "system", content: "You answer questions about a parsed building energy model. Use ONLY the provided JSON data. Reply as JSON {\"answer\":\"one sentence\",\"value\":\"the number with units, or empty\",\"where\":\"which field/model it came from\"}." },
+      { role: "user", content: `Data: ${JSON.stringify(ctx)}\n\nQuestion: ${query}` },
+    ],
+    temperature: 0, response_format: { type: "json_object" },
+  }, store.openaiKey);
   try { return JSON.parse(data.choices[0].message.content); } catch { return { answer: data.choices?.[0]?.message?.content || "no answer", value: "", where: "" }; }
 }
 

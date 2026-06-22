@@ -8,6 +8,33 @@ import type { Project } from "./api";
 
 export interface FileSet { blSim: File[]; blInp: File[]; propSim: File[]; propInp: File[]; }
 
+/** Human-in-the-loop "Project Info" inputs collected after parsing. Most are
+ *  auto-populated from the parsed model / project; the rest are optional blanks.
+ *  These are written straight into the workbook's Project Info sheet on export. */
+export interface ProjectInfo {
+  projectName?: string;
+  climateZone?: string;
+  programType?: string;
+  floorArea?: number;            // ft²
+  benchmarkEui?: number;         // AIA 2030 BmEUI (kBtu/ft²)
+  targetSavings?: number;        // AIA 2030 target savings, fraction (0.9 = 90%)
+  leedVersion?: string;
+  leedType?: string;
+  leedSubcategory?: string;
+  energyCodeStandard?: string;
+  energyCodeProcessLoads?: string; // "Yes" | "No"
+  // Performance Goals table (LEED / Code columns), each a fraction (0.9 = 90%)
+  energyGoalLeed?: number;
+  energyGoalCode?: number;
+  carbonGoalLeed?: number;
+  carbonGoalCode?: number;
+  costGoalLeed?: number;
+  costGoalCode?: number;
+  author?: string;
+  date?: string;
+  uncertaintyFactor?: number;    // fraction (0.05 = 5%)
+}
+
 export interface AppState {
   files: FileSet;
   option: string;
@@ -24,6 +51,7 @@ export interface AppState {
   openaiModel: string;
   trace: TraceReport | null;
   currentProject: Project | null;
+  projectInfo: ProjectInfo | null;
 }
 
 export const store: AppState = {
@@ -39,10 +67,11 @@ export const store: AppState = {
   // Hardcoded data-source keys (overridable via the settings popup).
   nrelKey: localStorage.getItem("ep_nrel_key") || "dYog29kfBgadw04fZZ9SfIZs76naSgMYubOwR9C6",
   eiaKey: localStorage.getItem("ep_eia_key") || "dcOTZpVO8P7hPsBKiv9PJvmqGw3gSjxuWa4jqrcV",
-  openaiKey: localStorage.getItem("ep_openai_key") || "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",
+  openaiKey: localStorage.getItem("ep_openai_key") || "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",
   openaiModel: localStorage.getItem("ep_openai_model") || "gpt-4o-mini",
   trace: null,
   currentProject: null,
+  projectInfo: null,
 };
 
 type Listener = () => void;

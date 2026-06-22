@@ -15,6 +15,8 @@
  * ============================================================ */
 import * as XLSX from "xlsx-js-style";
 import JSZip from "jszip";
+import { subregionFor, espmElecCarbonPerKwh, ESPM_GAS_KG_PER_THERM, ESPM_DISTRICT_KG_PER_MBTU, STATE_NAMES } from "./rates";
+import { COLUMNS } from "./columns";
 
 /* ---------- small helpers ---------- */
 const norm = (s: any) => String(s ?? "").replace(/ /g, " ").replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
@@ -60,9 +62,181 @@ export interface ReportData {
   cost: Record<string, EndUseRow>;
   source: Record<string, EndUseRow>;
   co2eRates: any[]; costRates: any[];                 // [elec, gas, addl, dc, dh]
+  summary: Record<string, { c: string; d: string }>; // Report "summary" block: norm(label) → {col C, col D} display strings
   params: Record<string, string[]>;                  // label → [leed, code, proposed] (Excel-formatted)
   totalFloorArea: any; climateZone: string; climateFile: string; location: string; projectName: string;
+  projectLocation: string;   // Project Info "Project Location" (e.g. "San Marcos, California")
+  climateFileClean: string;  // weather-file name with the run-name / climate-zone / WMO noise stripped
+  wmo: string;               // WMO station number parsed from the weather file (e.g. "722860")
+  dataSource: string;        // Project Info "Source of Cost and Emissions Data"
+  hasCode: boolean;          // a Code/Compliance baseline model is present
   tool: "equest" | "trace" | "honeybee" | null;
+}
+
+/** Parse the WMO station number out of a weather-file string ("…WMO#=722860"). */
+export function parseWmo(s: string): string {
+  const m = String(s || "").match(/WMO#?\s*=?\s*(\d{4,6})/i);
+  return m ? m[1] : "";
+}
+/** Clean a weather-file string down to the climate-file name. TRACE exports
+ *  prepend the run name + CEC climate zone and append the WMO tag, e.g.
+ *  "ASHRAE 90.1 2010 BASELINE ** Climate Zone 10 CA USA CTZRV2 WMO#=722860"
+ *  → "CA USA CTZRV2". eQUEST strings ("Baltimore MD TMY2") pass through. */
+export function cleanClimateFile(s: string): string {
+  let t = String(s || "").replace(/\s+/g, " ").trim();
+  t = t.replace(/\s*WMO#?\s*=?\s*\d{4,6}\s*$/i, "");                 // drop trailing WMO tag
+  t = t.replace(/^.*?\bClimate Zone\s+\d+[A-C]?\s*/i, "");           // drop run-name + CEC climate-zone prefix
+  return t.trim();
+}
+
+/* ============================================================
+ *  RAW-DATA FALLBACK
+ *  Compute the end-use Energy / Carbon / Cost tables directly from the
+ *  BL Data and Proposed Data sheets. Used when the formula-driven "Report"
+ *  sheet is broken — e.g. its Proposed selector ("Proposed Design") doesn't
+ *  match the actual proposed model's name ("Primary 0°"), so the whole
+ *  Proposed/Carbon/Cost set comes back as 0. The raw sheets are always
+ *  populated by the parser, so we recompute from them.
+ * ============================================================ */
+const KWH_KBTU = 3.412, THERM_KBTU = 100, MBTU_KBTU = 1000;
+
+/* each report end-use → BL/Proposed-Data column-header prefixes per fuel */
+const RAW_ENDUSE: { label: string; elec?: string[]; gas?: string[]; dc?: string[]; dh?: string[]; addl?: string[] }[] = [
+  { label: "Heating", elec: ["Heating - Electricity"], gas: ["Heating - Gas"], addl: ["Heating - Additonal Fuel"], dh: ["Heating - District Heating"] },
+  { label: "Cooling", elec: ["Cooling - Electricity"], dc: ["Cooling - District"] },
+  { label: "Lighting", elec: ["Interior Lighting - Electricity"] },
+  { label: "Exterior Lighting", elec: ["Exterior Lighting - Electricity"] },
+  { label: "Equipment", elec: ["Interior Equipment - Electricity"], gas: ["Interior Equipment - Gas"], addl: ["Interior Equipment - Additional Fuel"] },
+  { label: "Exterior Equipment", elec: ["Exterior Equipment - Energy Use"] },
+  { label: "Fans", elec: ["Fans - Electricity"] },
+  { label: "Pumps", elec: ["Pumps - Electricity"] },
+  { label: "Heat Rejection", elec: ["Heat Rejection - Electricity"] },
+  { label: "Humidification", elec: ["Humidification - Electricity"] },
+  { label: "Heat Recovery", elec: ["Heat Recovery - Electricity"] },
+  { label: "Water Systems", elec: ["Water Systems - Electricity"], gas: ["Water Systems - Gas"], addl: ["Water Systems - Additional Fuel"], dh: ["Water Systems - District Heating"] },
+  { label: "Refrigeration", elec: ["Refrigeration - Electricity"] },
+  { label: "Generators", elec: ["Generators"] },
+];
+
+interface FuelSplit { elec: number; gas: number; dc: number; dh: number; addl: number; energy: number; }
+/** Average the named fuel components across a set of data rows of a sheet grid. */
+function rawModel(g: Grid, rowIdxs: number[]): { eu: Record<string, FuelSplit>; totalCost: number | null; area: number } {
+  const header = (g[0] || []).map((c) => String(rv(c) ?? ""));
+  const colOf = (prefix: string) => header.findIndex((h) => h.startsWith(prefix));
+  const sumCols = (r: number, prefixes?: string[]) => (prefixes || []).reduce((a, p) => { const ci = colOf(p); return a + (ci >= 0 ? (num(rv(g[r][ci])) || 0) : 0); }, 0);
+  const n = rowIdxs.length || 1;
+  const eu: Record<string, FuelSplit> = {};
+  for (const d of RAW_ENDUSE) {
+    let elec = 0, gas = 0, dc = 0, dh = 0, addl = 0;
+    for (const r of rowIdxs) { elec += sumCols(r, d.elec); gas += sumCols(r, d.gas); dc += sumCols(r, d.dc); dh += sumCols(r, d.dh); addl += sumCols(r, d.addl); }
+    elec /= n; gas /= n; dc /= n; dh /= n; addl /= n;
+    eu[norm(d.label)] = { elec, gas, dc, dh, addl, energy: elec + gas + dc + dh + addl };
+  }
+  const costCol = colOf("Total Energy Cost");
+  let totalCost: number | null = null;
+  if (costCol >= 0) { let s = 0, c = 0; for (const r of rowIdxs) { const v = num(rv(g[r][costCol])); if (v != null) { s += v; c++; } } totalCost = c ? s / c : null; }
+  const areaCol = colOf("Conditioned Floor Area");
+  let area = 0; if (areaCol >= 0) for (const r of rowIdxs) { const v = num(rv(g[r][areaCol])); if (v) { area = v; break; } }
+  return { eu, totalCost, area };
+}
+
+/** Parse a US state abbreviation from a weather/climate-file string ("… CA USA …"). */
+function stateFromClimateFile(s: string): string {
+  const m = String(s || "").match(/\b([A-Z]{2})\s+USA\b/);
+  if (m && STATE_NAMES[m[1]]) return m[1];
+  const m2 = String(s || "").match(/\b([A-Z]{2})\b/g);
+  if (m2) for (const x of m2) if (STATE_NAMES[x]) return x;
+  return "";
+}
+
+/** Build the Energy / Carbon / Cost end-use maps + EUI/CEI/ECI from the raw
+ *  sheets. Returns null when the raw sheets aren't usable. */
+function computeRawReportData(wb: XLSX.WorkBook, proj: Grid, climateFile: string): null | {
+  energy: Record<string, EndUseRow>; carbon: Record<string, EndUseRow>; cost: Record<string, EndUseRow>;
+  eui: number; cei: number; eci: number; hasCode: boolean;
+} {
+  const bl = gridOf(wb.Sheets["BL Data"]); const pr = gridOf(wb.Sheets["Proposed Data"]);
+  if (!bl.length || !pr.length) return null;
+  const dataRows = (g: Grid) => { const out: number[] = []; for (let r = 1; r < g.length; r++) if (String(rv(g[r][0]) ?? "").trim()) out.push(r); return out; };
+  const blRows = dataRows(bl), prRows = dataRows(pr);
+  if (!blRows.length || !prRows.length) return null;
+
+  const leed = rawModel(bl, blRows);     // LEED baseline = avg of baseline rotations
+  const prop = rawModel(pr, prRows);     // Proposed = avg of proposed rows
+  const area = prop.area || leed.area || 1;
+
+  // rates ($/unit) — Project Info I29 elec, J29 gas (rows are 1-based → grid idx 28)
+  const pcell = (r: number, c: number) => num(rv((proj[r - 1] || [])[c - 1]));
+  const elecPerKwh = pcell(29, 9) || 0;       // I29
+  const gasPerTherm = pcell(29, 10) || 0;     // J29
+  // carbon factor (kg/kWh): Project Info I22, else ENERGY STAR eGRID subregion by state
+  let elecCarbonKwh = pcell(22, 9) || 0;      // I22
+  if (!elecCarbonKwh) { const st = stateFromClimateFile(climateFile); const sub = subregionFor(st, ""); if (sub) elecCarbonKwh = espmElecCarbonPerKwh(sub); }
+  const er = elecPerKwh / KWH_KBTU, gr = gasPerTherm / THERM_KBTU;            // $/kBtu
+  const ec = elecCarbonKwh / KWH_KBTU, gc = ESPM_GAS_KG_PER_THERM / THERM_KBTU; // kg/kBtu
+  const dcC = ESPM_DISTRICT_KG_PER_MBTU.chilledWaterElectric / MBTU_KBTU, dhC = ESPM_DISTRICT_KG_PER_MBTU.hotWater / MBTU_KBTU;
+  const costOf = (f: FuelSplit) => f.elec * er + f.gas * gr; // district/addl rates unknown → 0
+  const carbonOf = (f: FuelSplit) => f.elec * ec + f.gas * gc + f.dc * dcC + f.dh * dhC;
+
+  const energy: Record<string, EndUseRow> = {}, carbon: Record<string, EndUseRow> = {}, cost: Record<string, EndUseRow> = {};
+  const pct = (b: number, p: number) => (b > 0 ? (b - p) / b : 0);
+  let eTotL = 0, eTotP = 0, cTotL = 0, cTotP = 0, kTotL = 0, kTotP = 0;
+  for (const d of RAW_ENDUSE) {
+    const k = norm(d.label); const L = leed.eu[k], P = prop.eu[k];
+    const eL = L.energy, eP = P.energy; eTotL += eL; eTotP += eP;
+    const kL = carbonOf(L), kP = carbonOf(P); kTotL += kL; kTotP += kP;
+    const $L = costOf(L), $P = costOf(P); cTotL += $L; cTotP += $P;
+    energy[k] = { leed: eL, code: 0, proposed: eP, leedPct: pct(eL, eP), codePct: 0 };
+    carbon[k] = { leed: kL, code: 0, proposed: kP, leedPct: pct(kL, kP), codePct: 0 };
+    cost[k] = { leed: $L, code: 0, proposed: $P, leedPct: pct($L, $P), codePct: 0 };
+  }
+  // totals (use the raw Total Energy Cost columns for cost totals when present)
+  const costL = leed.totalCost ?? cTotL, costP = prop.totalCost ?? cTotP;
+  const totalRow = (l: number, p: number): EndUseRow => ({ leed: l, code: 0, proposed: p, leedPct: pct(l, p), codePct: 0 });
+  energy["total site energy use"] = energy["total energy use"] = totalRow(eTotL, eTotP);
+  energy["energy use intensity"] = totalRow(eTotL / area, eTotP / area);
+  carbon["total carbon emissions"] = totalRow(kTotL, kTotP);
+  carbon["carbon emissions intensity"] = totalRow(kTotL / area, kTotP / area);
+  cost["total energy cost"] = totalRow(costL, costP);
+  cost["energy cost intensity"] = totalRow(costL / area, costP / area);
+
+  return { energy, carbon, cost, eui: eTotP / area, cei: kTotP / area, eci: costP / area, hasCode: false };
+}
+
+/** Average a COLUMNS field across data rows of a BL/Proposed-Data grid. */
+function rawFieldAvg(g: Grid, rowIdxs: number[], key: string): number | null {
+  const def = COLUMNS.find((c) => c[1] === key); if (!def) return null;
+  const header = (g[0] || []).map((c) => norm(rv(c)));
+  const ci = header.indexOf(norm(def[0])); if (ci < 0) return null;
+  let s = 0, c = 0; for (const r of rowIdxs) { const v = num(rv(g[r][ci])); if (v != null) { s += v; c++; } }
+  return c ? s / c : null;
+}
+/** Map an Input-Summary parameter label (no units) → a COLUMNS field key. */
+function keyForParamLabel(labelNorm: string): string | null {
+  if (!labelNorm) return null;
+  for (const [h, k] of COLUMNS) { const hn = norm(h); if (hn === labelNorm || hn.startsWith(labelNorm + " ") || hn.startsWith(labelNorm)) return k; }
+  return null;
+}
+/** Format a number with the same decimal precision as a sample string. */
+function fmtLike(sample: string, val: number): string {
+  const s = String(sample || "").replace(/,/g, "").trim();
+  let dec = 1;
+  if (/^-?\d+(\.\d+)?$/.test(s)) { const dot = s.indexOf("."); dec = dot >= 0 ? s.length - dot - 1 : 0; }
+  return val.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+/** Fill the Proposed (and any missing LEED) simulation-parameter values from the
+ *  raw BL/Proposed Data sheets — used when the Input Summary's formula-driven
+ *  Proposed column is blank/0 (broken proposed selector). */
+function fillRawParams(params: Record<string, string[]>, bl: Grid, pr: Grid): void {
+  const dr = (g: Grid) => { const o: number[] = []; for (let r = 1; r < g.length; r++) if (String(rv(g[r][0]) ?? "").trim()) o.push(r); return o; };
+  const blRows = dr(bl), prRows = dr(pr);
+  if (!prRows.length) return;
+  const blank = (v: string | undefined) => v == null || v === "" || v === "-" || /^\$?\s*0(\.0+)?%?$/.test(String(v).replace(/,/g, ""));
+  for (const [labelNorm, vals] of Object.entries(params)) {
+    const key = keyForParamLabel(labelNorm); if (!key) continue;
+    if (blank(vals[2])) { const pv = rawFieldAvg(pr, prRows, key); if (pv != null && isFinite(pv)) vals[2] = fmtLike(vals[0] && !blank(vals[0]) ? vals[0] : "0.0", pv); }
+    if (blank(vals[0])) { const bv = rawFieldAvg(bl, blRows, key); if (bv != null && isFinite(bv)) vals[0] = fmtLike("0.0", bv); }
+  }
 }
 
 /** Scan an end-use block: labelCol holds the row name, then 5 value cols. */
@@ -84,6 +258,18 @@ function deriveLocation(climateFile: string): string {
   const t = String(climateFile || "").replace(/\s+/g, " ").trim();
   const m = t.match(/^([A-Za-z .'\-]+?)\s+([A-Z]{2})\b/);
   return m ? `${m[1].trim()}, ${m[2]}` : t;
+}
+/** Best-effort project location from a weather-file string. eQUEST strings
+ *  ("Baltimore MD TMY2") yield "Baltimore, MD"; polluted TRACE strings
+ *  ("ASHRAE … Climate Zone 10 CA USA CTZRV2 WMO#=722860") fall back to the
+ *  state name ("California"). The modeler can override via Project Info. */
+function resolveLocation(climateFile: string): string {
+  const loc = deriveLocation(climateFile);
+  if (/baseline|climate zone|wmo#|\*\*/i.test(loc) || loc.length > 40) {
+    const st = stateFromClimateFile(climateFile);
+    return st ? STATE_NAMES[st] : "";
+  }
+  return loc;
 }
 
 export function readWorkbook(buf: ArrayBuffer): ReportData {
@@ -128,23 +314,60 @@ export function readWorkbook(buf: ArrayBuffer): ReportData {
   const climateZone = String(find(proj, 1, "climate zone", 3) || (bl && bl["E2"]?.v) || (pr && pr["E2"]?.v) || "").trim();
   const climateFile = String((bl && bl["D2"]?.v) || (pr && pr["D2"]?.v) || "").replace(/\s+/g, " ").trim();
   const projectName = String(find(proj, 1, "project name", 3) || "").trim();
+  const projectLocation = String(find(proj, 1, "project location", 3) || "").trim();
+  const dataSource = String(find(proj, 1, "source of cost", 3) || find(proj, 1, "cost and emissions data", 3) || "").trim();
+  const wmo = parseWmo(climateFile);
+  const climateFileClean = cleanClimateFile(climateFile);
   // which simulation tool produced the model (drives the Software paragraph)
   const rp = String((pr && pr["B2"]?.v) || (bl && bl["B2"]?.v) || "").toLowerCase();
   const tool: ReportData["tool"] = /honeybee|\.hbjson/.test(rp) ? "honeybee"
     : /\.pdf\b|trace/.test(rp) ? "trace"
     : /\.sim\b|equest|doe-?2/.test(rp) ? "equest" : null;
 
+  // Result-summary block from the Report sheet: col B (1) label → col C (2) & col D
+  // (3) display strings. Feeds the LEED Energy Credit + AIA 2030 summary tables.
+  const summary: Record<string, { c: string; d: string }> = {};
+  for (let r = 0; r < rep.length; r++) {
+    const label = rv(rep[r][1]);
+    if (label == null || label === "" || typeof label === "number") continue;
+    const key = norm(label); if (!key) continue;
+    summary[key] = { c: rw(rep[r][2]), d: rw(rep[r][3]) };
+  }
+
+  const energy = readEndUse(rep, 6);    // G..M
+  const source = readEndUse(rep, 21);   // V..AB
+  const carbon = readEndUse(rep, 36);   // AK..AQ
+  const cost = readEndUse(rep, 51);     // AZ..BF
+  // A Code/Compliance baseline exists only if some end-use carries a non-zero Code value.
+  const anyCode = (m: Record<string, EndUseRow>) => Object.values(m).some((r) => { const v = num(r.code); return v != null && v !== 0; });
+  let hasCode = anyCode(energy) || anyCode(carbon) || anyCode(cost);
+
+  // The "Report" sheet is formula-driven and silently returns 0 when the
+  // workbook's Proposed selector doesn't match the proposed model's name
+  // (or carbon/cost factors are missing). Detect that — Proposed all zero or
+  // Carbon all zero — and recompute the tables from the raw BL/Proposed sheets.
+  const allZero = (m: Record<string, EndUseRow>, key: keyof EndUseRow) => Object.values(m).every((r) => !num(r[key]));
+  let energyM = energy, carbonM = carbon, costM = cost, euiV = eui, ceiV = cei, eciV = eci;
+  if (allZero(energy, "proposed") || allZero(carbon, "leed") || allZero(cost, "proposed")) {
+    const raw = computeRawReportData(wb, proj, climateFile);
+    if (raw) {
+      energyM = raw.energy; carbonM = raw.carbon; costM = raw.cost;
+      euiV = raw.eui; ceiV = raw.cei; eciV = raw.eci; hasCode = raw.hasCode;
+      // also recover the Proposed simulation-parameter values from raw data
+      fillRawParams(params, gridOf(wb.Sheets["BL Data"]), gridOf(wb.Sheets["Proposed Data"]));
+    }
+  }
+
   return {
-    eui, cei, eci, tool,
+    eui: euiV, cei: ceiV, eci: eciV, tool,
     unmetHeating: unmetRow("unmet heating"), unmetCooling: unmetRow("unmet cooling"),
-    energy: readEndUse(rep, 6),    // G..M
-    source: readEndUse(rep, 21),   // V..AB
-    carbon: readEndUse(rep, 36),   // AK..AQ
-    cost: readEndUse(rep, 51),     // AZ..BF
+    energy: energyM, source, carbon: carbonM, cost: costM,
     co2eRates: rateRow("unit co2e"), costRates: rateRow("unit energy cost"),
+    summary,
     params,
     totalFloorArea: find(inp, 1, "total floor area", 5),
-    climateZone, climateFile, location: deriveLocation(climateFile), projectName,
+    climateZone, climateFile, location: resolveLocation(climateFile), projectName,
+    projectLocation, dataSource, wmo, climateFileClean, hasCode,
   };
 }
 
@@ -236,13 +459,60 @@ function endUseLookup(map: Record<string, EndUseRow>, label: string): EndUseRow 
   return null;
 }
 
+/** concatenated lower-cased text of a table cell */
+function tcText(cellXml: string): string {
+  return [...cellXml.matchAll(new RegExp(WT + "([\\s\\S]*?)</w:t>", "g"))].map((x) => x[1]).join("").trim();
+}
+/** Fill an end-use breakdown table by COLUMN POSITION (read from the header
+ *  row), not by placeholder scanning. The breakdown tables have BLANK value
+ *  cells (no "-"), so placeholder logic mis-aligns them — this maps each header
+ *  column ("LEED Baseline", "Code Baseline", "Proposed", "LEED", "Code") to a
+ *  field and writes the formatted value into that exact cell. */
 function fillEndUseSection(xml: string, heading: string, data: Record<string, EndUseRow>, unit: "energy" | "carbon" | "cost"): string {
+  let pos = headingPos(xml, "Heading3", heading);
+  if (pos < 0) { const m = xml.match(new RegExp(WT + "\\s*" + heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*</w:t>", "i")); pos = m ? m.index! : -1; }
+  if (pos < 0) return xml;
+  const tblStart = xml.indexOf("<w:tbl>", pos);
+  if (tblStart < 0) return xml;
+  const tblEnd = xml.indexOf("</w:tbl>", tblStart) + "</w:tbl>".length;
+  const tbl = xml.slice(tblStart, tblEnd);
   const fmtVal = unit === "cost" ? fmtMoney : fmtInt;
-  return fillTableByRows(xml, { headingStyle: "Heading3", text: heading }, (label) => {
-    const row = endUseLookup(data, label);
-    if (!row) return null;
-    return [fmtVal(row.leed), fmtVal(row.code), fmtVal(row.proposed), fmtPct(row.leedPct), fmtPct(row.codePct)];
-  });
+
+  let colMap: Record<number, keyof EndUseRow> | null = null;
+  let width = 0, headerSeen = false, out = "", last = 0;
+  const re = /<w:tr\b[\s\S]*?<\/w:tr>/g; let m: RegExpExecArray | null;
+  while ((m = re.exec(tbl))) {
+    out += tbl.slice(last, m.index); last = m.index + m[0].length;
+    let row = m[0];
+    const cells = [...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)];
+    const texts = cells.map((c) => tcText(c[0]).toLowerCase());
+    if (!headerSeen) {
+      if (texts.includes("proposed") || texts.includes("leed baseline")) {
+        headerSeen = true; width = cells.length; colMap = {};
+        texts.forEach((t, i) => {
+          if (t === "leed baseline") colMap![i] = "leed";
+          else if (t === "code baseline") colMap![i] = "code";
+          else if (t === "proposed") colMap![i] = "proposed";
+          else if (t === "leed") colMap![i] = "leedPct";
+          else if (t === "code") colMap![i] = "codePct";
+        });
+      }
+    } else if (colMap && cells.length === width) {
+      const r = endUseLookup(data, tcText(cells[0][0]));
+      if (r) {
+        let ci = 0;
+        row = row.replace(/<w:tc>[\s\S]*?<\/w:tc>/g, (c) => {
+          const field = colMap![ci++];
+          if (!field) return c;
+          const val = (field === "leedPct" || field === "codePct") ? fmtPct(r[field]) : fmtVal(r[field]);
+          return setCellText(c, val);
+        });
+      }
+    }
+    out += row;
+  }
+  out += tbl.slice(last);
+  return xml.slice(0, tblStart) + out + xml.slice(tblEnd);
 }
 
 /* ---------- Simulation-parameter tables: value cells are EMPTY, so we
@@ -285,15 +555,108 @@ function fillParamRegion(xml: string, params: Record<string, string[]>): string 
   return xml.slice(0, s) + filled + xml.slice(e);
 }
 
+/** Fill EVERY table whose first-row first cell equals `title`, writing each row's
+    values into the cells starting at column index `valueColStart`. Used for the
+    fixed-layout Result-Summary tables (LEED Energy Credit, AIA 2030) whose value
+    cells aren't reliable "-" placeholders. `rowVals(label)` → values or null. */
+function fillSummaryTable(xml: string, title: string, valueColStart: number, rowVals: (label: string) => (string | null)[] | null): string {
+  const titleN = norm(title);
+  return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (tbl) => {
+    const firstRow = (tbl.match(/<w:tr\b[\s\S]*?<\/w:tr>/) || [""])[0];
+    const titleCell = (firstRow.match(/<w:tc>[\s\S]*?<\/w:tc>/) || [""])[0];
+    if (norm(tcText(titleCell)) !== titleN) return tbl;
+    return tbl.replace(/<w:tr\b[\s\S]*?<\/w:tr>/g, (row) => {
+      const cells = [...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)];
+      if (!cells.length) return row;
+      const vals = rowVals(tcText(cells[0][0]));
+      if (!vals || !vals.length) return row;
+      let ci = 0;
+      return row.replace(/<w:tc>[\s\S]*?<\/w:tc>/g, (c) => {
+        const vi = ci++ - valueColStart;
+        return (vi >= 0 && vi < vals.length && vals[vi] != null && vals[vi] !== "") ? setCellText(c, vals[vi] as string) : c;
+      });
+    });
+  });
+}
+
+/** AIA 2030 Summary row value (Report col D display string) for a document label. */
+function aiaValueFor(summary: Record<string, { c: string; d: string }>, label: string): (string | null)[] | null {
+  const n = norm(label);
+  const d = (k: string) => (summary[k] ? [summary[k].d] : null);
+  if (n.includes("gross peui")) return d("gross peui design eui");
+  if (n.includes("net peui")) return d("net peui w renewable offset");
+  if (n.includes("benchmark eui")) return d("aia 2030 benchmark eui bmeui");
+  if (n.includes("target eui")) return d("target eui based on 90 savings");
+  if (n === "savings") return d("peui savings vs bmeui");
+  if (n.includes("grid electricity")) return d("predicted annual grid electricity use");
+  if (n.includes("annual gas")) return d("predicted annual gas use");
+  if (n.includes("district use")) return d("predicted district use");
+  if (n.includes("fossil fuel")) return d("predicted other fossil fuel source");
+  if (n.includes("renewable use")) return d("predicted on site renewable use");
+  return null;
+}
+
+/** LEED Energy Credit Summary row values [Savings, Points] for a document label. */
+function leedValuesFor(summary: Record<string, { c: string; d: string }>, label: string): (string | null)[] | null {
+  const n = norm(label);
+  const cd = (k: string) => (summary[k] ? [summary[k].c, summary[k].d] : null);
+  if (n.includes("optimize energy cost")) return cd("optimize energy performance");
+  if (n.includes("optimize energy carbon")) return cd("optimize energy carbon performance"); // no workbook row yet → left as-is
+  if (n.includes("eapc95")) return cd("eapc95 alternative metric");
+  if (n.includes("renewable energy percentage")) return cd("renewable energy production");
+  return null;
+}
+
+/** Rebuild a paragraph keeping its style/run-props but replacing the visible text. */
+function setParaText(para: string, text: string): string {
+  const open = (para.match(/^<w:p\b[^>]*>/) || ["<w:p>"])[0];
+  const pPr = (para.match(/<w:pPr>[\s\S]*?<\/w:pPr>/) || [""])[0];
+  const rPr = (para.match(/<w:r\b[^>]*>\s*(<w:rPr>[\s\S]*?<\/w:rPr>)/) || [])[1] || "";
+  return `${open}${pPr}<w:r>${rPr}<w:t xml:space="preserve">${escXml(text)}</w:t></w:r></w:p>`;
+}
+
+/** Clone a Heading3 section (its heading paragraph + the table that follows) and
+    re-insert it right after that table, with the heading re-titled `newText`. The
+    clone keeps the source table's placeholders so it can be filled like any other.
+    Used to add the "Source Energy" end-use breakdown the template lacks. */
+function cloneSectionAfter(xml: string, srcHeading: string, newText: string): string {
+  if (headingPos(xml, "Heading3", newText) >= 0) return xml; // already present
+  const pos = headingPos(xml, "Heading3", srcHeading);
+  if (pos < 0) return xml;
+  const hStart = Math.max(xml.lastIndexOf("<w:p ", pos), xml.lastIndexOf("<w:p>", pos));
+  if (hStart < 0) return xml;
+  const hEnd = xml.indexOf("</w:p>", pos) + "</w:p>".length;
+  const headingPara = xml.slice(hStart, hEnd);
+  const tblStart = xml.indexOf("<w:tbl>", hEnd);
+  if (tblStart < 0) return xml;
+  const tblEnd = xml.indexOf("</w:tbl>", tblStart) + "</w:tbl>".length;
+  const tbl = xml.slice(tblStart, tblEnd);
+  // No leading page break: the Site charts inserted before this section already
+  // end with a page break, so the Source heading starts cleanly on a new page.
+  const clone = setParaText(headingPara, newText) + tbl;
+  return xml.slice(0, tblEnd) + clone + xml.slice(tblEnd);
+}
+
 /** Replace [bracket] tokens inside the paragraph containing `anchor`, even when
     a token is split across runs — the whole paragraph is rebuilt as one run. */
-function fillParagraphTokens(xml: string, anchor: string, repl: Record<string, string>): string {
-  const ai = xml.indexOf(anchor); if (ai < 0) return xml;
+/** Index of the first paragraph whose CONCATENATED visible text contains
+ *  `needle` (handles tokens split across runs / fields). -1 if none. */
+function paraIndexByText(xml: string, needle: string): number {
+  const re = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) if (paraText(m[0]).includes(needle)) return m.index;
+  return -1;
+}
+function fillParagraphTokens(xml: string, anchor: string, repl: Record<string, string>, prefix = ""): string {
+  let ai = xml.indexOf(anchor);
+  if (ai < 0) ai = paraIndexByText(xml, anchor);   // anchor may be split across runs
+  if (ai < 0) return xml;
   const ps = Math.max(xml.lastIndexOf("<w:p ", ai), xml.lastIndexOf("<w:p>", ai)); if (ps < 0) return xml;
   const pe = xml.indexOf("</w:p>", ai) + "</w:p>".length;
   const para = xml.slice(ps, pe);
   let text = [...para.matchAll(new RegExp(WT + "([\\s\\S]*?)</w:t>", "g"))].map((m) => m[1]).join("");
   for (const [k, v] of Object.entries(repl)) if (v) text = text.split(k).join(escXml(v));
+  if (prefix) text = escXml(prefix) + text;
   const open = (para.match(/^<w:p\b[^>]*>/) || ["<w:p>"])[0];
   const pPr = (para.match(/<w:pPr>[\s\S]*?<\/w:pPr>/) || [""])[0];
   const rPr = (para.match(/<w:r\b[^>]*>\s*(<w:rPr>[\s\S]*?<\/w:rPr>)/) || [])[1] || "";
@@ -327,6 +690,37 @@ function collapseBlankParagraphs(xml: string, fromIndex: number): string {
     prevBlank = false; return p;
   });
   return xml.slice(0, i) + tail;
+}
+
+/** Remove footer-only blank pages: any run of "<page break> … empty paragraphs …
+ *  <page break>" (no text, drawing, table, section break, bookmark or field in
+ *  between) collapses to a SINGLE page break. This kills the blank pages created
+ *  where an inserted chart block's trailing break meets the template's own break.
+ *  Content is never removed — only empty paragraphs and the redundant break. */
+function removeBlankPages(xml: string): string {
+  const blockRe = /<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[^>]*\/>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
+  const isBreak = (b: string) => !b.startsWith("<w:tbl") && /<w:br w:type="page"\/>/.test(b);
+  const isContent = (b: string) =>
+    b.startsWith("<w:tbl") || new RegExp(WT).test(b) ||
+    /<w:drawing|<w:pict|<w:object|<w:sectPr|<w:bookmarkStart|<w:fldChar|<w:instrText/.test(b);
+  for (let guard = 0; guard < 200; guard++) {
+    const blocks: { s: number; e: number; xml: string }[] = [];
+    let m: RegExpExecArray | null; blockRe.lastIndex = 0;
+    while ((m = blockRe.exec(xml))) blocks.push({ s: m.index, e: m.index + m[0].length, xml: m[0] });
+    let didChange = false;
+    for (let i = 0; i < blocks.length; i++) {
+      if (!isBreak(blocks[i].xml)) continue;
+      let j = i + 1;
+      while (j < blocks.length && !isBreak(blocks[j].xml) && !isContent(blocks[j].xml)) j++;
+      if (j < blocks.length && isBreak(blocks[j].xml)) {
+        // keep blocks[i] (first break); drop the empties + the second break (i+1 … j)
+        xml = xml.slice(0, blocks[i + 1].s) + xml.slice(blocks[j].e);
+        didChange = true; break;
+      }
+    }
+    if (!didChange) break;
+  }
+  return xml;
 }
 
 /* ============================================================
@@ -364,14 +758,225 @@ function insertChartAfterTable(xml: string, heading: string, chartParagraph: str
 }
 
 /* ============================================================
+ *  3b. STRUCTURAL EDITS  (README, zoning page, images, code columns, captions)
+ * ============================================================ */
+const EMU_PER_PX = 9525;        // 96 dpi
+const PAGE_BREAK = `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`;
+
+/** Pixel dimensions of a PNG or JPEG from its header bytes. */
+function imageDims(buf: ArrayBuffer): { w: number; h: number } {
+  const b = new Uint8Array(buf);
+  // PNG: width/height are big-endian uint32 at bytes 16..24 (after IHDR)
+  if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50) {
+    const rd = (o: number) => (b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3]) >>> 0;
+    return { w: rd(16), h: rd(20) };
+  }
+  // JPEG: scan SOF0..SOF15 markers (skip APPn/DQT etc.)
+  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const marker = b[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        const h = (b[i + 5] << 8) | b[i + 6]; const w = (b[i + 7] << 8) | b[i + 8];
+        return { w, h };
+      }
+      i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+    }
+  }
+  return { w: 600, h: 400 }; // fallback aspect
+}
+
+/** Inline-image drawing paragraph, scaled to fit maxWidth (EMU), centered. */
+function inlineImageXml(rId: string, docPrId: number, name: string, buf: ArrayBuffer, maxWidthEmu = 5486400): string {
+  const { w, h } = imageDims(buf);
+  let cx = w * EMU_PER_PX, cy = h * EMU_PER_PX;
+  if (cx > maxWidthEmu) { cy = Math.round(cy * (maxWidthEmu / cx)); cx = maxWidthEmu; }
+  return `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing>` +
+    `<wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">` +
+    `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    `<wp:docPr id="${docPrId}" name="${escXml(name)}"/><wp:cNvGraphicFramePr/>` +
+    `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:nvPicPr><pic:cNvPr id="${docPrId}" name="${escXml(name)}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${rId}"/>` +
+    `<a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>` +
+    `</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+}
+
+/** A "Figure N: title" caption paragraph (Caption style). */
+function captionXml(n: number, title: string): string {
+  return `<w:p><w:pPr><w:pStyle w:val="Caption"/><w:jc w:val="center"/></w:pPr>` +
+    `<w:r><w:t xml:space="preserve">Figure ${n}: ${escXml(title)}</w:t></w:r></w:p>`;
+}
+
+/** Find the OUTER <w:p>…</w:p> that encloses byte `idx`, honoring nested
+ *  paragraphs (e.g. text boxes), and remove it. */
+function removeOuterParagraphAt(xml: string, idx: number): string {
+  const start = Math.max(xml.lastIndexOf("<w:p>", idx), xml.lastIndexOf("<w:p ", idx));
+  if (start < 0) return xml;
+  let depth = 0, i = start;
+  const open = /<w:p\b[^>]*?>/g, openSelf = /<w:p\b[^>]*?\/>/;
+  // walk tags from start, tracking <w:p> open/close depth
+  const tagRe = /<\/?w:p\b[^>]*?>/g; tagRe.lastIndex = start;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(xml))) {
+    const tag = m[0];
+    if (/\/>$/.test(tag)) { if (depth === 0) { i = m.index + tag.length; break; } continue; }
+    if (tag[1] === "/") { depth--; if (depth === 0) { i = m.index + tag.length; break; } }
+    else depth++;
+  }
+  void open; void openSelf;
+  return xml.slice(0, start) + xml.slice(i);
+}
+
+/** Remove the README text-box block(s) from the cover. The README lives inside a
+ *  floating text box (mc:AlternateContent / w:pict), so we anchor on the box
+ *  start — its nearest enclosing <w:p> is the body paragraph hosting the
+ *  drawing — and drop that whole paragraph (Choice + Fallback together). */
+function removeReadme(xml: string): string {
+  let out = xml, guard = 0;
+  while (guard++ < 4) {
+    const i = out.indexOf("README");
+    if (i < 0) break;
+    const box = Math.max(out.lastIndexOf("<mc:AlternateContent", i), out.lastIndexOf("<w:drawing", i), out.lastIndexOf("<w:pict", i));
+    const next = removeOuterParagraphAt(out, box >= 0 ? box : i);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/** Remove the "Figure 2: Energy Model Zoning" image + caption paragraphs and
+ *  the trailing page break, so that whole page drops out of the report. */
+function removeZoningPage(xml: string): string {
+  let out = xml;
+  // The zoning image paragraph sits AFTER the "Figure 1: Energy Model" caption
+  // and BEFORE the "Figure 2: Energy Model Zoning" caption. Remove that drawing
+  // paragraph first (anchored off Figure 1's caption so we never touch Fig 1's
+  // own image, which precedes its caption).
+  const fig1 = out.search(new RegExp(WT + "[^<]*Energy Model</w:t>", "i"));
+  if (fig1 >= 0) {
+    const fig1End = out.indexOf("</w:t>", fig1) + 6;
+    const draw = out.indexOf("<w:drawing", fig1End);
+    const zoneCap = out.search(new RegExp(WT + "[^<]*Energy Model Zoning[^<]*</w:t>", "i"));
+    if (draw >= 0 && (zoneCap < 0 || draw < zoneCap)) {
+      const next = removeOuterParagraphAt(out, draw);
+      if (next !== out) out = next;
+    }
+  }
+  // delete the zoning caption paragraph(s) (caption uses a SEQ field, so
+  // "Energy Model Zoning" sits in its own <w:t> run).
+  let guard = 0;
+  while (guard++ < 4) {
+    const m = out.match(new RegExp(WT + "[^<]*Energy Model Zoning[^<]*</w:t>", "i"));
+    if (!m) break;
+    const next = removeOuterParagraphAt(out, m.index!);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/** Drop the "Code Baseline" (col 3) and "Code" (col 6) cells from every row of
+ *  any table whose header row contains a "Code Baseline" cell. */
+export function dropCodeColumns(xml: string): string {
+  const cellTexts = (row: string) => [...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((c) =>
+    [...c[0].matchAll(new RegExp(WT + "([\\s\\S]*?)</w:t>", "g"))].map((x) => x[1]).join("").trim().toLowerCase());
+  return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (tbl) => {
+    const rows = [...tbl.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+    // header = first row that actually carries a "Code Baseline" column label.
+    const headerCells = rows.map((r) => cellTexts(r[0]));
+    const hIdx = headerCells.findIndex((c) => c.includes("code baseline"));
+    if (hIdx < 0) return tbl;
+    const h = headerCells[hIdx];
+    const width = h.length;
+    const codeBL = h.indexOf("code baseline");
+    const codePct = h.findIndex((t, i) => i > codeBL && t === "code");
+    const drop = new Set([codeBL, codePct].filter((i) => i >= 0));
+    return tbl.replace(/<w:tr\b[\s\S]*?<\/w:tr>/g, (row) => {
+      // only touch rows with the same column count (skip merged title/spacer rows)
+      if ([...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].length !== width) return row;
+      let ci = 0;
+      return row.replace(/<w:tc>[\s\S]*?<\/w:tc>/g, (c) => (drop.has(ci++) ? "" : c));
+    });
+  });
+}
+
+/* ============================================================
  *  4. MAIN
  * ============================================================ */
-export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer): Promise<Blob> {
+export interface WordReportOptions {
+  projectRendering?: { buf: ArrayBuffer; ext: string } | null; // cover image
+  modelSnip?: { buf: ArrayBuffer; ext: string } | null;        // Figure 1 model image
+  exportDate?: Date;       // report date (defaults to today)
+  fallbackTitle?: string;  // used for [Project Title] when the workbook has no project name
+}
+
+export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer, opts: WordReportOptions = {}): Promise<Blob> {
   const data = readWorkbook(xlsxBuf);
 
   const docZip = await JSZip.loadAsync(docxBuf);
   const xlZip = await JSZip.loadAsync(xlsxBuf);
   let doc = await docZip.file("word/document.xml")!.async("string");
+
+  /* ---- content-types + relationships (shared by images and charts) ---- */
+  let ct = await docZip.file("[Content_Types].xml")!.async("string");
+  let rels = await docZip.file("word/_rels/document.xml.rels")!.async("string");
+  let maxRid = Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => +m[1]));
+  const ctOverrides: string[] = [];
+  const newRels: string[] = [];
+  let mediaIdx = 1, docPr = 900;
+  const haveExt = new Set([...ct.matchAll(/Extension="([^"]+)"/g)].map((m) => m[1].toLowerCase()));
+  const ensureExt = (ext: string, type: string) => { const e = ext.toLowerCase(); if (!haveExt.has(e)) { haveExt.add(e); ctOverrides.push(`<Default Extension="${e}" ContentType="${type}"/>`); } };
+  /** Add an image media part, return its inline-image paragraph XML. */
+  const addImage = (img: { buf: ArrayBuffer; ext: string }, name: string): string => {
+    const ext = img.ext.replace(/^\./, "").toLowerCase();
+    ensureExt(ext === "jpg" ? "jpg" : ext, ext === "png" ? "image/png" : "image/jpeg");
+    const part = `media/rptimg${mediaIdx}.${ext}`;
+    docZip.file(`word/${part}`, img.buf);
+    const rId = `rId${++maxRid}`;
+    newRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${part}"/>`);
+    mediaIdx++;
+    return inlineImageXml(rId, docPr++, name, img.buf);
+  };
+
+  /* ---- cover: remove README box, fill title block, insert rendering ---- */
+  doc = removeReadme(doc);
+  const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  doc = fillParagraphTokens(doc, "Project Title", { "[Project Title]": data.projectName || opts.fallbackTitle || "" });
+  doc = fillParagraphTokens(doc, "Analysis Title", { "[Analysis Title]": "Energy Analysis" });
+  doc = fillParagraphTokens(doc, "Month Day, Year", { "Month Day, Year": fmtDate(opts.exportDate || new Date()) });
+  // Project rendering — replace the "[Insert Project Rendering]" placeholder with
+  // the modeler's uploaded image; if none, just drop the placeholder paragraph.
+  {
+    const m = doc.match(new RegExp(WT + "\\s*Insert Project Rendering\\s*</w:t>"));
+    if (m) {
+      const repl = opts.projectRendering ? addImage(opts.projectRendering, "Project Rendering") : "";
+      const start = Math.max(doc.lastIndexOf("<w:p>", m.index!), doc.lastIndexOf("<w:p ", m.index!));
+      const end = doc.indexOf("</w:p>", m.index!) + "</w:p>".length;
+      doc = doc.slice(0, start) + repl + doc.slice(end);
+    }
+  }
+  // Model snip (Figure 1: Energy Model) — replace the template's sample model
+  // image paragraph with the modeler's snip, keeping the caption.
+  if (opts.modelSnip) {
+    // Figure 1 caption run ends with "Energy Model" (Figure 2 ends with "Zoning").
+    const cap = doc.search(new RegExp(WT + "[^<]*Energy Model</w:t>"));
+    if (cap >= 0) {
+      const drawStart = doc.lastIndexOf("<w:drawing>", cap);
+      if (drawStart >= 0) {
+        const ps = Math.max(doc.lastIndexOf("<w:p>", drawStart), doc.lastIndexOf("<w:p ", drawStart));
+        const pe = doc.indexOf("</w:p>", drawStart) + "</w:p>".length;
+        doc = doc.slice(0, ps) + addImage(opts.modelSnip, "Energy Model") + doc.slice(pe);
+      }
+    }
+  }
+  // Omit the Energy Model Zoning page
+  doc = removeZoningPage(doc);
 
   /* ---- fill the data tables ---- */
   // Result Summary (EUI / CEI / ECI) — match by row label, single value cell
@@ -382,6 +987,11 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
     if (n.includes("energy cost intensity")) return [fmtDec(data.eci)];
     return null;
   });
+  // LEED Energy Credit Summary — both variants (pre / post-2024 · v4.1) are filled
+  // from the workbook's LEED block; Savings in col 1, Points in col 2.
+  doc = fillSummaryTable(doc, "LEED Energy Credit Summary", 1, (label) => leedValuesFor(data.summary, label));
+  // AIA 2030 Summary — single value column (col 2), straight from the Report sheet.
+  doc = fillSummaryTable(doc, "AIA 2030 Summary", 2, (label) => aiaValueFor(data.summary, label));
   // Unmet hours
   doc = fillTableByRows(doc, { headingStyle: "Heading2", text: "Unmet Hours" }, (label) => {
     const n = norm(label);
@@ -397,12 +1007,20 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
     if (n.includes("energy cost") || n.includes("unit energy")) return data.costRates.map(fmtMoney);
     return null;
   });
-  // Climate paragraph (location / zone / weather file)
+  // Climate paragraph (location / zone / weather file). Location prefers the
+  // Project Info "Project Location" field; the climate-file name is cleaned of
+  // run-name / CEC-zone / WMO noise; a parsed WMO# is prepended when present.
   doc = fillParagraphTokens(doc, "The project is based", {
-    "[location]": data.location,
+    "[location]": data.projectLocation || data.location,
     "[zone designation]": data.climateZone,
-    "[insert name of climate file]": data.climateFile,
-  });
+    "[insert name of climate file]": data.climateFileClean || data.climateFile,
+  }, data.wmo ? `WMO#=${data.wmo}. ` : "");
+  // Source of cost & emissions data (Project Info question)
+  if (data.dataSource) {
+    doc = fillParagraphTokens(doc, "source of the cost and emissions data", {
+      "[Please note the source of the cost and emissions data]": data.dataSource,
+    });
+  }
   // Software paragraph — keep only the description for the detected tool, drop
   // the others, the "[If …]" labels and the "[Choose …]" instruction line.
   if (data.tool) {
@@ -418,39 +1036,48 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
   }
   // Simulation Parameters — envelope, loads, HVAC & exterior-lighting tables
   doc = fillParamRegion(doc, data.params);
-  // End-use breakdowns (the page-9-onward detail)
+  // Add the "Source Energy" end-use breakdown the template lacks (cloned from the
+  // Site "Energy Consumption" section) so all four metrics — Site / Source / Carbon
+  // / Cost — get a table. Clone BEFORE drop/fill so it's processed like the rest.
+  doc = cloneSectionAfter(doc, "Energy Consumption", "Source Energy");
+  // When there is no Code/Compliance model, drop the "Code Baseline" + "Code"
+  // columns from the breakdown tables BEFORE filling, so fills line up.
+  if (!data.hasCode) doc = dropCodeColumns(doc);
+  // End-use breakdowns (the page-9-onward detail) — filled by column position.
   doc = fillEndUseSection(doc, "Energy Consumption", data.energy, "energy");
+  doc = fillEndUseSection(doc, "Source Energy", data.source, "energy");
   doc = fillEndUseSection(doc, "Carbon Emissions", data.carbon, "carbon");
   doc = fillEndUseSection(doc, "Energy Cost", data.cost, "cost");
 
-  /* ---- embed the native charts ---- */
-  // copy content types
-  let ct = await docZip.file("[Content_Types].xml")!.async("string");
-  let rels = await docZip.file("word/_rels/document.xml.rels")!.async("string");
-  let maxRid = Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => +m[1]));
-  const ctOverrides: string[] = [];
-  const newRels: string[] = [];
-
-  // chart map: workbook chart part → (doc heading to anchor after, friendly name)
-  const charts: { src: string; heading: string; name: string }[] = [
-    { src: "xl/charts/chart1.xml", heading: "Energy Consumption", name: "Site Energy" },
-    { src: "xl/charts/chart3.xml", heading: "Energy Consumption", name: "Source Energy" },
-    { src: "xl/charts/chart5.xml", heading: "Carbon Emissions", name: "Carbon Emissions" },
-    { src: "xl/charts/chart7.xml", heading: "Energy Cost", name: "Energy Cost" },
+  /* ---- embed the native charts ----
+     Each of the four metric sheets (Site / Source / Carbon / Cost) carries TWO
+     workbook charts: the absolute total by end use and the per-ft² intensity. They
+     go on the page AFTER that metric's table (a page break before AND after, so the
+     table gets its own page and the two graphs share the next). Figure 1 is the
+     Energy Model on the Model page; chart captions continue the numbering. */
+  const chartSheets: { heading: string; metric: string; absUnit: string; intUnit: string; abs: string; int: string }[] = [
+    { heading: "Energy Consumption", metric: "Site Energy Use", absUnit: "kBtu", intUnit: "kBtu/ft²", abs: "xl/charts/chart1.xml", int: "xl/charts/chart2.xml" },
+    { heading: "Source Energy", metric: "Source Energy Use", absUnit: "kBtu", intUnit: "kBtu/ft²", abs: "xl/charts/chart3.xml", int: "xl/charts/chart4.xml" },
+    { heading: "Carbon Emissions", metric: "Carbon Emissions", absUnit: "kg CO2e", intUnit: "kg CO2e/ft²", abs: "xl/charts/chart5.xml", int: "xl/charts/chart6.xml" },
+    { heading: "Energy Cost", metric: "Energy Cost", absUnit: "$/yr", intUnit: "$/ft²", abs: "xl/charts/chart7.xml", int: "xl/charts/chart8.xml" },
   ];
-
-  let chartIdx = 1, docPr = 900;
-  for (const c of charts) {
-    const srcFile = xlZip.file(c.src);
-    if (!srcFile) continue;
+  let chartIdx = 1, figNo = 1; // Figure 1 = Energy Model (kept on the Model page)
+  const embedChart = async (src: string, title: string): Promise<string> => {
+    const srcFile = xlZip.file(src);
+    if (!srcFile) return "";
     const chartXml = await srcFile.async("string");
     const partName = `word/charts/chart${chartIdx}.xml`;
     docZip.file(partName, chartXml);
     ctOverrides.push(`<Override PartName="/${partName}" ContentType="${CT_CHART}"/>`);
     const rId = `rId${++maxRid}`;
     newRels.push(`<Relationship Id="${rId}" Type="${REL_CHART}" Target="charts/chart${chartIdx}.xml"/>`);
-    doc = insertChartAfterTable(doc, c.heading, inlineChartXml(rId, docPr++, c.name));
     chartIdx++;
+    return inlineChartXml(rId, docPr++, title) + captionXml(++figNo, title);
+  };
+  for (const s of chartSheets) {
+    const a = await embedChart(s.abs, `${s.metric} by End Use (${s.absUnit})`);
+    const b = await embedChart(s.int, `${s.metric} Intensity by End Use (${s.intUnit})`);
+    if (a || b) doc = insertChartAfterTable(doc, s.heading, PAGE_BREAK + a + b + PAGE_BREAK);
   }
   if (ctOverrides.length) ct = ct.replace("</Types>", ctOverrides.join("") + "</Types>");
   if (newRels.length) rels = rels.replace("</Relationships>", newRels.join("") + "</Relationships>");
@@ -460,6 +1087,9 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
   // Anchored on the real Heading1 — never the TOC entry or the page-2 floating
   // tables — so those layouts are untouched.
   doc = collapseBlankParagraphs(doc, headingPos(doc, "Heading1", "Detailed Results"));
+  // Drop footer-only blank pages (e.g. where a chart block's trailing page break
+  // meets the template's own break between metric sections).
+  doc = removeBlankPages(doc);
 
   docZip.file("[Content_Types].xml", ct);
   docZip.file("word/_rels/document.xml.rels", rels);

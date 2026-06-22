@@ -6,7 +6,7 @@ export interface ProjectFile { id: string; name: string; stored: string; role: "
 export interface Project {
   id: string; ownerId: string; ownerName: string; name: string; address: string;
   modelType: "equest" | "trace" | "iesve";
-  files: ProjectFile[]; parsed: any | null; rates: any | null; ratesName: string;
+  files: ProjectFile[]; parsed: any | null; rates: any | null; ratesName: string; projectInfo: any | null; setupDraft?: boolean; mepcDraft?: any | null;
   createdAt: number; updatedAt: number; hasParsed?: boolean; summary?: any;
 }
 export interface RateSet { id: string; ownerId: string; ownerName: string; name: string; config: any; shared: boolean; createdAt: number; updatedAt?: number; }
@@ -86,6 +86,11 @@ export const RateHistory = {
   add: (snapshot: Partial<RateSnapshot>) => api("/rate-history", { method: "POST", body: JSON.stringify(snapshot) }),
   remove: (id: string) => api(`/rate-history/${id}`, { method: "DELETE" }),
   clear: () => api("/rate-history", { method: "DELETE" }),
+};
+
+/* Zero Tool (AIA 2030) baseline calculator — proxied via the server (avoids CORS) */
+export const ZeroTool = {
+  baseline: (buildings: any[]) => api("/zerotool/baseline", { method: "POST", body: JSON.stringify(buildings) }),
 };
 
 export function logout() { setToken(null); authUser = null; location.reload(); }

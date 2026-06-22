@@ -8,7 +8,7 @@ import { h, esc, toast, fmt } from "../ui/util";
 import { ICON } from "../ui/icons";
 import { infoBoxes } from "../ui/infoboxes";
 import { makeChart, PALETTE } from "../ui/charts";
-import { geocodeAddress, STATE_NAMES, EGRID_STATE_KG_PER_KWH } from "../engine/rates";
+import { geocodeAddress, STATE_NAMES, EGRID_STATE_KG_PER_KWH, computeDesOption1Rates, RateConfig, subregionFor, espmElecCarbonPerKwh, ESPM_GAS_KG_PER_THERM, ESPM_SOURCE } from "../engine/rates";
 import {
   gatherElectricity, gatherGas, gatherCarbon, gatherWater, pickMax, chatgptWaterCharges,
   GatherOpts, RateCandidate, EIA_COMM_CENTS_PER_KWH, EIA_GAS_DOLLARS_PER_THERM, WATER_DOLLARS_PER_KGAL,
@@ -417,17 +417,59 @@ async function fillWaterAI(root: HTMLElement, body: HTMLElement) {
 function districtCard(): HTMLElement {
   const cfg = store.rates;
   const acc = h(`<div class="subacc" style="margin-top:12px"></div>`);
-  const head = h(`<div class="subacc-head">${ICON.leed("x").replace('class="nav-ico"', 'class="x" style="width:16px;height:16px;stroke:var(--g600);fill:none;stroke-width:2"')} District energy (LEED, optional) <span class="chev">▶</span></div>`);
-  const body = h(`<div class="subacc-body"><div class="form-grid">
-    <div class="field"><label>District cooling carbon (kg/kBtu)</label><input id="d-dc-c" type="number" step="0.001" value="${cfg.dc_carbon_per_kbtu || ""}" placeholder="≈ 0.020" /></div>
-    <div class="field"><label>District heating carbon (kg/kBtu)</label><input id="d-dh-c" type="number" step="0.001" value="${cfg.dh_carbon_per_kbtu || ""}" placeholder="≈ 0.060" /></div>
-    <div class="field"><label>District cooling rate ($/kBtu)</label><input id="d-dc-r" type="number" step="0.0001" value="${cfg.dc_rate_per_kbtu || ""}" /></div>
-    <div class="field"><label>District heating rate ($/kBtu)</label><input id="d-dh-r" type="number" step="0.0001" value="${cfg.dh_rate_per_kbtu || ""}" /></div>
-  </div></div>`);
+  const head = h(`<div class="subacc-head">${ICON.leed("x").replace('class="nav-ico"', 'class="x" style="width:16px;height:16px;stroke:var(--g600);fill:none;stroke-width:2"')} District energy (LEED Option 1, optional) <span class="chev">▶</span></div>`);
+  const proj = store.currentProject ? `<b>${esc(store.currentProject.name)}</b>` : "the selected project";
+  const body = h(`<div class="subacc-body">
+    <div class="source-note" style="margin-bottom:10px">Derive virtual DES rates from your electricity &amp; gas rates above (USGBC DES Guidance §2.4.2.1, Option 1). Pick the district service(s) ${proj} uses, then <b>Compute</b>. Rates flow into the cost &amp; carbon roll-up via District Cooling/Heating consumption (kBtu) from the model.</div>
+    <div class="form-grid" style="margin-bottom:8px">
+      <div class="field"><label>District cooling (chilled water)</label><select id="d-svc-c"><option value="0">— not used —</option><option value="1" ${cfg.des_cooling ? "selected" : ""}>Yes · chilled water (×71)</option></select></div>
+      <div class="field"><label>District heating medium</label><select id="d-svc-h">
+        <option value="">— not used —</option>
+        <option value="hotwater" ${cfg.des_heating === "hotwater" ? "selected" : ""}>Hot water (fuel ×1.59 + elec ×3)</option>
+        <option value="steam" ${cfg.des_heating === "steam" ? "selected" : ""}>Steam (fuel ×1.81 + elec ×3)</option>
+      </select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin:4px 0 10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-dark btn-sm" id="d-compute">${ICON.refresh()} Compute from utility rates</button>
+      <span id="d-compute-note" style="font-size:12px;color:var(--g500)"></span>
+    </div>
+    <div id="d-steps" style="font-size:11.5px;color:var(--g600);font-family:'DM Mono',monospace;line-height:1.8;margin-bottom:8px"></div>
+    <div class="form-grid">
+      <div class="field"><label>District cooling rate ($/kBtu)</label><input id="d-dc-r" type="number" step="0.00001" value="${cfg.dc_rate_per_kbtu || ""}" /></div>
+      <div class="field"><label>District heating rate ($/kBtu)</label><input id="d-dh-r" type="number" step="0.00001" value="${cfg.dh_rate_per_kbtu || ""}" /></div>
+      <div class="field"><label>District cooling carbon (kg/kBtu)</label><input id="d-dc-c" type="number" step="0.0001" value="${cfg.dc_carbon_per_kbtu || ""}" placeholder="≈ 0.0527" /></div>
+      <div class="field"><label>District heating carbon (kg/kBtu)</label><input id="d-dh-c" type="number" step="0.0001" value="${cfg.dh_carbon_per_kbtu || ""}" placeholder="≈ 0.0664" /></div>
+    </div>
+    <div class="source-note" style="margin-top:10px;border-left-color:var(--g300)">Carbon factors: ENERGY STAR Portfolio Manager district factors (chilled water 52.70, steam/hot water 66.40 kg/MBtu). Computed values are editable — override with actual DES plant data when available.</div>
+  </div>`);
   head.addEventListener("click", () => acc.classList.toggle("open"));
-  const bind = (id: string, set: (n: number) => void) => body.querySelector(id)!.addEventListener("input", (e) => set(num(e.target as HTMLInputElement) || 0));
+
+  const setNum = (id: string, v: number) => { const el = body.querySelector(id) as HTMLInputElement; el.value = v ? String(+v.toFixed(6)) : ""; };
+  const bind = (id: string, set: (n: number) => void) => body.querySelector(id)!.addEventListener("input", (e) => { set(num(e.target as HTMLInputElement) || 0); emit(); });
   bind("#d-dc-c", (n) => cfg.dc_carbon_per_kbtu = n); bind("#d-dh-c", (n) => cfg.dh_carbon_per_kbtu = n);
   bind("#d-dc-r", (n) => cfg.dc_rate_per_kbtu = n); bind("#d-dh-r", (n) => cfg.dh_rate_per_kbtu = n);
+  body.querySelector("#d-svc-c")!.addEventListener("change", (e) => cfg.des_cooling = (e.target as HTMLSelectElement).value === "1");
+  body.querySelector("#d-svc-h")!.addEventListener("change", (e) => cfg.des_heating = (e.target as HTMLSelectElement).value as RateConfig["des_heating"]);
+
+  body.querySelector("#d-compute")!.addEventListener("click", () => {
+    cfg.des_cooling = (body.querySelector("#d-svc-c") as HTMLSelectElement).value === "1";
+    cfg.des_heating = (body.querySelector("#d-svc-h") as HTMLSelectElement).value as RateConfig["des_heating"];
+    const res = computeDesOption1Rates({ elec_per_kwh: cfg.elec_per_kwh, gas_per_therm: cfg.gas_per_therm, cooling: cfg.des_cooling, heating: cfg.des_heating });
+    cfg.dc_rate_per_kbtu = res.dc_rate_per_kbtu; cfg.dh_rate_per_kbtu = res.dh_rate_per_kbtu;
+    cfg.dc_carbon_per_kbtu = res.dc_carbon_per_kbtu; cfg.dh_carbon_per_kbtu = res.dh_carbon_per_kbtu;
+    setNum("#d-dc-r", res.dc_rate_per_kbtu); setNum("#d-dh-r", res.dh_rate_per_kbtu);
+    setNum("#d-dc-c", res.dc_carbon_per_kbtu); setNum("#d-dh-c", res.dh_carbon_per_kbtu);
+    const steps = body.querySelector("#d-steps")!;
+    steps.innerHTML = [
+      ...res.steps.map((s) => `<div>✓ ${esc(s)}</div>`),
+      ...res.warnings.map((w) => `<div style="color:var(--red)">⚠ ${esc(w)}</div>`),
+    ].join("") || "";
+    const note = body.querySelector("#d-compute-note")!;
+    note.textContent = res.warnings.length ? "Resolve the warnings, then recompute." : "✓ Virtual DES rates applied.";
+    if (!res.warnings.length) toast("✓ DES Option-1 rates computed");
+    emit();
+  });
+
   acc.appendChild(head); acc.appendChild(body);
   return acc;
 }
@@ -507,9 +549,6 @@ async function loadHistory(root: HTMLElement) {
   if (!items.length) { body.innerHTML = `<div style="color:var(--g400);font-size:13px;padding:8px 0">No history yet — Locate &amp; source rates, or hit “Snapshot current rates”.</div>`; return; }
 
   body.innerHTML = "";
-  // trend chart (chronological)
-  const asc = [...items].sort((a, b) => a.ts - b.ts);
-  body.appendChild(h(`<div style="height:280px;margin:4px 0 8px"><canvas id="rh-chart"></canvas></div>`));
   // table (newest first)
   const scroll = h(`<div style="overflow-x:auto"></div>`);
   const table = h(`<table class="final-table mepc-table"><thead><tr><th style="text-align:left">When</th><th style="text-align:left">Location</th>${HIST.map((x) => `<th>${esc(x.label)}<br><span style="font-weight:400;color:var(--g400);font-size:10px">${esc(x.unit)}</span></th>`).join("")}<th></th></tr></thead><tbody></tbody></table>`);
@@ -529,29 +568,6 @@ async function loadHistory(root: HTMLElement) {
     tb.appendChild(tr);
   });
   scroll.appendChild(table); body.appendChild(scroll);
-  body.appendChild(h(`<div class="source-note" style="border-left-color:var(--g300)">Tip: click a series in the legend to isolate it — rates sit on very different scales.</div>`));
-
-  const labels = asc.map((s) => new Date(s.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
-  requestAnimationFrame(() => {
-    const c = root.querySelector("#rh-chart") as HTMLCanvasElement; if (!c) return;
-    makeChart(c, {
-      type: "line",
-      data: {
-        labels,
-        datasets: HIST.map((x) => ({
-          label: `${x.label} (${x.unit})`, color: x.color,
-          data: asc.map((s) => s[x.key] as number | null),
-          borderColor: x.color, backgroundColor: x.color, tension: 0.25, spanGaps: true, pointRadius: 3, borderWidth: 2,
-        })),
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: { legend: { display: true, position: "bottom", labels: { usePointStyle: true, boxWidth: 8 } } },
-        scales: { x: { grid: { display: false }, border: { display: false } }, y: { grid: { color: "#f0f0f1" }, border: { display: false } } },
-      },
-    });
-  });
 }
 
 /* ---------- settings modal ---------- */
@@ -625,7 +641,26 @@ function setSource(e: Entity, src: string) {
   else if (e === "carbon") { c.carbon_method = "manual"; c.carbon_source = src; }
   else c.water_source = src;
 }
-function autoCarbon() { const c = store.rates; if (!c.state) return; const f = EGRID_STATE_KG_PER_KWH[c.state]; if (f != null && c.elec_carbon_per_kwh == null) { c.elec_carbon_per_kwh = f; c.carbon_source = `EPA eGRID2022 — ${STATE_NAMES[c.state]} (ref: https://www.epa.gov/egrid)`; } }
+/* Auto-populate the grid carbon factor. Prefer the ENERGY STAR Portfolio
+ * Manager eGRID-subregion factor resolved from the project ZIP (the method in
+ * the GHG Technical Reference / Emissions.pdf); fall back to the state-level
+ * eGRID factor when no ZIP/subregion is available. Never overwrite a value the
+ * user already set. */
+function autoCarbon() {
+  const c = store.rates;
+  if (c.elec_carbon_per_kwh != null) return;
+  const sub = subregionFor(c.state || "", c.pincode);
+  if (sub) {
+    c.elec_carbon_per_kwh = +espmElecCarbonPerKwh(sub).toFixed(4);
+    c.gas_carbon_per_therm = ESPM_GAS_KG_PER_THERM;
+    c.carbon_method = "manual";
+    c.carbon_source = `${ESPM_SOURCE} · eGRID ${sub} (ZIP ${c.pincode || "—"})`;
+    return;
+  }
+  if (!c.state) return;
+  const f = EGRID_STATE_KG_PER_KWH[c.state];
+  if (f != null) { c.elec_carbon_per_kwh = f; c.carbon_source = `EPA eGRID2022 — ${STATE_NAMES[c.state]} (ref: https://www.epa.gov/egrid)`; }
+}
 
 function updateRow(root: HTMLElement, e: Entity) {
   const fv = root.querySelector(`#ftval-${e}`); if (fv) fv.textContent = baseVal(e) == null ? "—" : dispVal(e);

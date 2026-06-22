@@ -27,6 +27,8 @@ export interface RateConfig {
   dh_carbon_per_kbtu: number;  // district heating
   dc_rate_per_kbtu: number;
   dh_rate_per_kbtu: number;
+  des_cooling: boolean;                      // building takes district chilled water
+  des_heating: "" | "hotwater" | "steam";    // district heating medium (blank = none)
 
   // location / project address
   location_name: string;   // full project address (label: "Project Address")
@@ -55,6 +57,7 @@ export function defaultRateConfig(): RateConfig {
     carbon_source: "", tou_profile: "office",
     water_per_kgal: null, water_source: "",
     dc_carbon_per_kbtu: 0, dh_carbon_per_kbtu: 0, dc_rate_per_kbtu: 0, dh_rate_per_kbtu: 0,
+    des_cooling: false, des_heating: "",
     location_name: "", city: "", country: "USA", pincode: "", state: "", lat: null, lon: null,
     water_meter_charge: null, water_consumption_per_kgal: null,
     irrigation_meter_charge: null, irrigation_per_kgal: null,
@@ -251,6 +254,71 @@ export const LEED_DES_GUIDANCE: LeedGuidance = {
   ],
   source: "USGBC — Treatment of District or Campus Thermal Energy in LEED v2 and LEED 2009 Design & Construction, v2.0 (Aug 13, 2010). Default efficiencies §2.4.1.2.3; virtual rate formulas §2.4 (Energy Rates). [DES Guidance.pdf]",
 };
+
+/* ------------------------------------------------------------
+ *  DES Option-1 virtual-rate computation (§2.4.2.1).
+ *  Converts the project's flat electricity/gas rates into virtual
+ *  district chilled-water / hot-water / steam rates, and pairs them
+ *  with ESPM district carbon factors. All outputs are per kBtu to
+ *  match the RateConfig fields consumed by enrichRow().
+ * ------------------------------------------------------------ */
+const THERM_PER_MBTU = 10;      // 1 MBTU (million Btu) = 10 therms
+const KBTU_PER_MBTU = 1000;     // 1 MBTU = 1000 kBtu
+// §2.4.2.1 virtual DES rate multipliers (units: $/MBTU).
+const DES_MULT = {
+  chilledWater: { elec: 71 },               // $/MBTU = VElec($/kWh) × 71
+  hotWater: { fuel: 1.59, elec: 3 },        // $/MBTU = VFuel($/MBTU) × 1.59 + VElec($/kWh) × 3
+  steam: { fuel: 1.81, elec: 3 },           // $/MBTU = VFuel($/MBTU) × 1.81 + VElec($/kWh) × 3
+};
+
+export interface DesRateInput {
+  elec_per_kwh: number | null;   // virtual electric rate ($/kWh) — flat structure
+  gas_per_therm: number | null;  // virtual fuel rate source ($/therm) — flat structure
+  cooling: boolean;              // building takes district chilled water
+  heating: "" | "hotwater" | "steam"; // district heating medium (blank = none)
+}
+export interface DesRateResult {
+  dc_rate_per_kbtu: number;
+  dh_rate_per_kbtu: number;
+  dc_carbon_per_kbtu: number;
+  dh_carbon_per_kbtu: number;
+  ve: number | null;             // virtual electric rate used ($/kWh)
+  vf: number | null;             // virtual fuel rate used ($/MBTU)
+  steps: string[];               // human-readable working for the UI
+  warnings: string[];            // missing-input notes
+}
+
+/** Compute DES Option-1 virtual rates from flat utility rates (USGBC DES Guidance §2.4.2.1). */
+export function computeDesOption1Rates(inp: DesRateInput): DesRateResult {
+  const ve = inp.elec_per_kwh;                                   // $/kWh
+  const vf = inp.gas_per_therm != null ? inp.gas_per_therm * THERM_PER_MBTU : null; // $/MBTU
+  const steps: string[] = [];
+  const warnings: string[] = [];
+  let dc_rate = 0, dh_rate = 0, dc_carbon = 0, dh_carbon = 0;
+
+  if (inp.cooling) {
+    if (ve == null) warnings.push("District cooling needs an electricity rate ($/kWh) — set it above.");
+    else {
+      const perMbtu = ve * DES_MULT.chilledWater.elec;
+      dc_rate = perMbtu / KBTU_PER_MBTU;
+      dc_carbon = ESPM_DISTRICT_KG_PER_MBTU.chilledWaterElectric / KBTU_PER_MBTU;
+      steps.push(`Chilled water: $${ve.toFixed(4)}/kWh × 71 = $${perMbtu.toFixed(2)}/MBTU → $${dc_rate.toFixed(5)}/kBtu`);
+    }
+  }
+  if (inp.heating) {
+    const m = inp.heating === "steam" ? DES_MULT.steam : DES_MULT.hotWater;
+    const label = inp.heating === "steam" ? "Steam" : "Hot water";
+    if (ve == null || vf == null) warnings.push(`District ${label.toLowerCase()} needs both an electricity ($/kWh) and a gas ($/therm) rate.`);
+    else {
+      const perMbtu = vf * m.fuel + ve * m.elec;
+      dh_rate = perMbtu / KBTU_PER_MBTU;
+      dh_carbon = (inp.heating === "steam" ? ESPM_DISTRICT_KG_PER_MBTU.steam : ESPM_DISTRICT_KG_PER_MBTU.hotWater) / KBTU_PER_MBTU;
+      steps.push(`${label}: $${vf.toFixed(2)}/MBTU × ${m.fuel} + $${ve.toFixed(4)}/kWh × ${m.elec} = $${perMbtu.toFixed(2)}/MBTU → $${dh_rate.toFixed(5)}/kBtu`);
+    }
+  }
+  if (!inp.cooling && !inp.heating) warnings.push("Pick at least one district service (cooling and/or heating).");
+  return { dc_rate_per_kbtu: dc_rate, dh_rate_per_kbtu: dh_rate, dc_carbon_per_kbtu: dc_carbon, dh_carbon_per_kbtu: dh_carbon, ve, vf, steps, warnings };
+}
 
 /* ============================================================
  *  Location identification (lat/lon → place + state) via Nominatim.

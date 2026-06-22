@@ -542,3 +542,48 @@ table.data td[contenteditable]:focus { outline: 2px solid var(--red); outline-of
     0 0 5px rgba(255, 255, 255, .95),
     0 0 18px rgba(255, 255, 255, .45);
 }
+/* ============ MEPC mockup popup (Phase 3) ============ */
+.mm-overlay { padding: 0; }
+.mm-modal { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; border-radius: 0; display: flex; flex-direction: column; overflow: hidden; }
+.mm-modal .modal-hd { flex: 0 0 auto; }
+.mm-count { margin-left: auto; margin-right: 12px; font-size: 12px; color: var(--g500); font-weight: 600; }
+.mm-digest { flex: 0 0 auto; padding: 10px 20px; border-bottom: 1px solid var(--g200); background: var(--g50, #fafafa); }
+.mm-digest-hd { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.mm-digest-hd .muted-tag { font-weight: 400; }
+.mm-digest-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.mm-digest-row input[type=file] { font-size: 12px; }
+.mm-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--g200); }
+.mm-search { flex: 1; max-width: 320px; padding: 6px 10px; border: 1px solid var(--g200); border-radius: 8px; font-size: 12.5px; }
+.mm-legend { margin-left: auto; display: flex; gap: 8px; }
+.mm-chip { font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+.mm-chip.empty { background: #fff7cc; border: 1px solid #f2e08a; }
+.mm-chip.filled { background: #dcfce7; border: 1px solid #9fe3b8; }
+.mm-chip.cond { background: #fff3e0; border: 1px solid #f0c98a; color: #b26a00; }
+.mm-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 8px 16px 0; overflow-x: auto; border-bottom: 1px solid var(--g200); }
+.mm-tab { white-space: nowrap; border: 1px solid var(--g200); border-bottom: none; background: var(--g100); color: var(--g600); padding: 7px 12px; border-radius: 8px 8px 0 0; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.mm-tab.active { background: #fff; color: var(--black); font-weight: 600; border-color: var(--g300); }
+.mm-tab-badge { font-size: 10px; padding: 1px 6px; border-radius: 20px; background: #fff7cc; border: 1px solid #f2e08a; color: #7a6a1f; }
+.mm-tab-badge.done { background: #dcfce7; border-color: #9fe3b8; color: #166534; }
+.mm-body { flex: 1 1 auto; overflow: auto; padding: 0; background: #fff; }
+/* Excel-faithful grid */
+.mm-xl { border-collapse: collapse; table-layout: fixed; font: 11px/1.3 Calibri, 'Segoe UI', system-ui, sans-serif; }
+.mm-xl th, .mm-xl td { border: 1px solid #d4d4d4; padding: 1px 4px; height: 20px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: middle; color: #1a1a1a; background: #fff; }
+.mm-xl thead th { position: sticky; top: 0; z-index: 3; }
+.mm-xl-head th { background: #f2f2f2; color: #555; font-weight: 600; text-align: center; height: 18px; }
+.mm-xl-rownum { position: sticky; left: 0; z-index: 2; background: #f2f2f2; color: #555; font-weight: 600; text-align: center; width: 34px; }
+.mm-lbl { color: #222; }
+.mm-rowhidden .mm-xl-rownum { background: #fff3e0; color: #b26a00; }
+.mm-rowhidden td { background: #fffaf3; }
+.mm-rowhidden td.mm-in.empty { background: #fff7cc; }
+.mm-rowhidden td.mm-in.filled { background: #dcfce7; }
+.mm-in { padding: 0 !important; }
+.mm-in.empty { background: #fff7cc; box-shadow: inset 0 0 0 1px #e6cf66; }
+.mm-in.filled { background: #dcfce7; box-shadow: inset 0 0 0 1px #86d3a4; }
+.mm-in.flash { outline: 2px solid var(--red); outline-offset: -2px; }
+.mm-cell-input { width: 100%; border: none; background: transparent; font: inherit; padding: 1px 4px; color: #0b3d1f; min-width: 40px; }
+.mm-cell-input:focus { outline: 2px solid var(--red); outline-offset: -2px; background: #fff; }
+select.mm-cell-input { cursor: pointer; }
+.mm-pct { position: absolute; right: 4px; font-size: 9px; color: #888; pointer-events: none; }
+.mm-info { flex: 0 0 auto; padding: 7px 16px; border-top: 1px solid var(--g200); background: #fbfbfb; font-size: 12px; color: var(--g700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mm-info-ref { font: 10px 'DM Mono', monospace; color: var(--g400); margin: 0 6px; }
+.mm-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--g200); }

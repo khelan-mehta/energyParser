@@ -11,6 +11,8 @@ import { buildWordReport } from "../engine/wordreport";
 import templateUrl from "../assets/report_template.docx?url";
 
 let xlsxFile: File | null = null;
+let renderingFile: File | null = null;
+let modelSnipFile: File | null = null;
 let busy = false;
 
 const readBuf = (f: File): Promise<ArrayBuffer> =>
@@ -21,7 +23,7 @@ function downloadBlob(blob: Blob, name: string) {
 }
 
 export function renderWordReport(root: HTMLElement) {
-  xlsxFile = null; busy = false;
+  xlsxFile = null; renderingFile = null; modelSnipFile = null; busy = false;
 
   root.appendChild(h(`
     <div class="page-head">
@@ -47,8 +49,50 @@ export function renderWordReport(root: HTMLElement) {
   ));
 
   root.appendChild(uploadCard(root));
+  root.appendChild(imagesCard(root));
   root.appendChild(genCard(root));
   refresh(root);
+}
+
+/* ---------- optional images (project rendering + model snip) ---------- */
+function imageDrop(id: string, title: string, hint: string): string {
+  return `<div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">${title}</div>
+    <label class="dropzone" id="${id}-dz" style="padding:18px">
+      <input type="file" accept="image/png,image/jpeg" hidden />
+      <div class="dz-ico">🖼️</div>
+      <div class="dz-t">Drop a PNG/JPEG or click to browse</div>
+      <div class="dz-h">${hint}</div>
+    </label>
+    <div class="chips" id="${id}-file" style="margin-top:10px"></div>
+  </div>`;
+}
+function imagesCard(root: HTMLElement): HTMLElement {
+  const card = h(`<div class="card" style="margin-bottom:16px">
+    <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">🖼️</div>
+      <h3>2 · Insert images <span style="font-weight:500;color:var(--g400);font-size:12px">(optional)</span></h3><span class="sub">project rendering &amp; a snip of your model</span></div>
+    <div class="grid cards-2" style="margin-top:6px;gap:18px">
+      ${imageDrop("wr-render", "Project Rendering", "shown on the cover (replaces “[Insert Project Rendering]”)")}
+      ${imageDrop("wr-snip", "Model Snip", "shown as Figure 1: Energy Model")}
+    </div>
+  </div>`);
+  const bindImg = (id: string, set: (f: File | null) => void) => {
+    const dz = card.querySelector(`#${id}-dz`) as HTMLElement;
+    const input = dz.querySelector("input") as HTMLInputElement;
+    const pick = (files?: FileList | null) => {
+      const f = files && files[0];
+      if (!f) return;
+      if (!/\.(png|jpe?g)$/i.test(f.name)) { toast("Please upload a PNG or JPEG image"); return; }
+      set(f); refresh(root);
+    };
+    input.addEventListener("change", (e) => pick((e.target as HTMLInputElement).files));
+    ["dragenter", "dragover"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
+    dz.addEventListener("drop", (e) => pick((e as DragEvent).dataTransfer?.files));
+  };
+  bindImg("wr-render", (f) => renderingFile = f);
+  bindImg("wr-snip", (f) => modelSnipFile = f);
+  return card;
 }
 
 /* ---------- upload ---------- */
@@ -83,7 +127,7 @@ function uploadCard(root: HTMLElement): HTMLElement {
 function genCard(root: HTMLElement): HTMLElement {
   const card = h(`<div class="card">
     <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.book().replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div>
-      <h3>2 · Generate the report</h3><span class="sub">fills tables + embeds charts</span></div>
+      <h3>3 · Generate the report</h3><span class="sub">fills tables + embeds charts</span></div>
     <div class="grid cards-4" id="wr-feats" style="margin-top:6px">
       ${feat("📈", "Site &amp; Source", "End-use energy charts")}
       ${feat("🟢", "Carbon", "Emissions by end use")}
@@ -106,16 +150,20 @@ function feat(icon: string, title: string, sub: string): string {
     <div style="font-size:12px;color:var(--g500);margin-top:2px">${sub}</div></div>`;
 }
 
-function refresh(root: HTMLElement) {
-  const list = root.querySelector("#wr-file");
-  if (list) {
-    list.innerHTML = "";
-    if (xlsxFile) {
-      const chip = h(`<span class="chip"><b style="font-weight:600">workbook</b> ${esc(xlsxFile.name)} <span class="x">×</span></span>`);
-      chip.querySelector(".x")!.addEventListener("click", () => { xlsxFile = null; refresh(root); });
-      list.appendChild(chip);
-    }
+function fileChip(root: HTMLElement, sel: string, label: string, file: File | null, clear: () => void) {
+  const list = root.querySelector(sel);
+  if (!list) return;
+  list.innerHTML = "";
+  if (file) {
+    const chip = h(`<span class="chip"><b style="font-weight:600">${esc(label)}</b> ${esc(file.name)} <span class="x">×</span></span>`);
+    chip.querySelector(".x")!.addEventListener("click", () => { clear(); refresh(root); });
+    list.appendChild(chip);
   }
+}
+function refresh(root: HTMLElement) {
+  fileChip(root, "#wr-file", "workbook", xlsxFile, () => xlsxFile = null);
+  fileChip(root, "#wr-render-file", "rendering", renderingFile, () => renderingFile = null);
+  fileChip(root, "#wr-snip-file", "model snip", modelSnipFile, () => modelSnipFile = null);
   const go = root.querySelector("#wr-go") as HTMLButtonElement | null;
   if (go) go.disabled = !xlsxFile || busy;
   root.querySelectorAll<HTMLElement>("#wr-feats > div").forEach((el) => { el.style.opacity = xlsxFile ? "1" : ".55"; el.style.transition = "opacity .2s"; });
@@ -129,12 +177,27 @@ async function generate(root: HTMLElement) {
   go.disabled = true;
   status.innerHTML = `<span class="spinner" style="width:13px;height:13px;vertical-align:middle"></span> Reading workbook & building report…`;
   try {
-    const [xlsxBuf, tplResp] = await Promise.all([readBuf(xlsxFile), fetch(templateUrl)]);
+    const extOf = (f: File) => (f.name.match(/\.(png|jpe?g)$/i)?.[1] || "png").toLowerCase().replace("jpeg", "jpg");
+    const [xlsxBuf, tplResp, renderBuf, snipBuf] = await Promise.all([
+      readBuf(xlsxFile), fetch(templateUrl),
+      renderingFile ? readBuf(renderingFile) : Promise.resolve(null),
+      modelSnipFile ? readBuf(modelSnipFile) : Promise.resolve(null),
+    ]);
     if (!tplResp.ok) throw new Error(`report template not found (HTTP ${tplResp.status})`);
     const docxBuf = await tplResp.arrayBuffer();
-    const blob = await buildWordReport(xlsxBuf, docxBuf);
-    const base = xlsxFile.name.replace(/\.xlsx$/i, "").replace(/\W+/g, "_");
-    downloadBlob(blob, `${base}_Energy_Report.docx`);
+    const blob = await buildWordReport(xlsxBuf, docxBuf, {
+      projectRendering: renderBuf && renderingFile ? { buf: renderBuf, ext: extOf(renderingFile) } : null,
+      modelSnip: snipBuf && modelSnipFile ? { buf: snipBuf, ext: extOf(modelSnipFile) } : null,
+      exportDate: new Date(),
+      fallbackTitle: xlsxFile.name.replace(/\.xlsx$/i, "").replace(/[_-]+/g, " "),
+    });
+    // Name the report "<projectName>_Energy Results Comparision Report.docx".
+    // The uploaded workbook is "<projectName>_Energy Results Comparision.xlsx", so
+    // strip that trailing tag (any spacing/spelling) to recover the project name.
+    const stem = xlsxFile.name.replace(/\.xlsx$/i, "").trim();
+    const projName = (stem.replace(/[_\s]*Energy[_\s]*Results[_\s]*Compar\w*.*$/i, "").trim() || stem)
+      .replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+    downloadBlob(blob, `${projName}_Energy Results Comparision Report.docx`);
     status.innerHTML = `<span style="color:var(--g700)">✓ Report generated — check your downloads.</span>`;
     toast("✓ Word report downloaded");
   } catch (e: any) {

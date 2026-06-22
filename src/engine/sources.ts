@@ -7,6 +7,27 @@
  *  Fallback:   OpenAI (ChatGPT) with user key — returns value + source.
  * ============================================================ */
 import { EGRID_STATE_KG_PER_KWH, STATE_NAMES, cambiumTouFactor } from "./rates";
+import { getToken } from "../api";
+
+/* OpenAI chat via the same-origin backend proxy (/api/openai/chat) — avoids
+ * the browser CORS block on api.openai.com. Returns the raw OpenAI JSON. */
+export async function openaiChat(body: any, openaiKey: string): Promise<any> {
+  if (!openaiKey) throw new Error("no OpenAI key");
+  const resp = await fetch("/api/openai/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-openai-key": openaiKey,
+      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`OpenAI HTTP ${resp.status} ${t.slice(0, 120)}`);
+  }
+  return resp.json();
+}
 
 export interface RateCandidate {
   kind: "elec" | "gas" | "carbon" | "water";
@@ -218,24 +239,15 @@ export async function chatgptLookup(
   const prompt = `Give the most recent typical ${what} for ${locationText}. ` +
     `Respond ONLY as compact JSON: {"value": <number in ${unit}>, "year": "<year>", "source": "<dataset/utility name>", "url": "<reference url>"}. ` +
     `Use authoritative sources (EIA, EPA eGRID, NREL, the local utility tariff). Value must be a plain number in ${unit}.`;
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-    body: JSON.stringify({
-      model: model || "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are an energy-data assistant. Answer with authoritative, recent figures and a real citation URL. JSON only." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0,
-      response_format: { type: "json_object" },
-    }),
-  });
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`OpenAI HTTP ${resp.status} ${t.slice(0, 120)}`);
-  }
-  const data = await resp.json();
+  const data = await openaiChat({
+    model: model || "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "You are an energy-data assistant. Answer with authoritative, recent figures and a real citation URL. JSON only." },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0,
+    response_format: { type: "json_object" },
+  }, openaiKey);
   const txt = data?.choices?.[0]?.message?.content || "{}";
   let parsed: any;
   try { parsed = JSON.parse(txt); } catch { throw new Error("OpenAI: unparseable response"); }
@@ -264,20 +276,14 @@ export async function chatgptWaterCharges(locationText: string, openaiKey: strin
     `"irrigation_meter":<irrigation monthly facility charge $/month>,"irrigation_per_kgal":<irrigation $ per 1000 gallons>,` +
     `"sewer_meter":<sewer monthly facility charge $/month>,"sewer_per_kgal":<sewer $ per 1000 gallons>,` +
     `"source":"<utility rate sheet name & year>","url":"<reference url>"}. Use a typical commercial meter size. Numbers only.`;
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-    body: JSON.stringify({
-      model: model || "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a utility-rate analyst. Return real, recent figures from the local water utility tariff with a citation. JSON only." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0, response_format: { type: "json_object" },
-    }),
-  });
-  if (!resp.ok) throw new Error(`OpenAI HTTP ${resp.status}`);
-  const data = await resp.json();
+  const data = await openaiChat({
+    model: model || "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "You are a utility-rate analyst. Return real, recent figures from the local water utility tariff with a citation. JSON only." },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0, response_format: { type: "json_object" },
+  }, openaiKey);
   let p: any; try { p = JSON.parse(data?.choices?.[0]?.message?.content || "{}"); } catch { throw new Error("unparseable"); }
   const n = (x: any) => { const v = parseFloat(x); return isNaN(v) ? 0 : v; };
   return {

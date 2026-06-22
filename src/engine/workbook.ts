@@ -14,7 +14,29 @@ import type { Row } from "./sim";
 import { COLUMNS } from "./columns";
 import { enrichRow } from "./enrich";
 import type { RateConfig } from "./rates";
-import { siteToSourceFor } from "./rates";
+import { siteToSourceFor, subregionFor, espmElecCarbonPerKwh, EGRID_STATE_KG_PER_KWH, STATE_NAMES } from "./rates";
+import { EIA_COMM_CENTS_PER_KWH, EIA_GAS_DOLLARS_PER_THERM } from "./sources";
+
+/** Parse a US state abbreviation from a weather/climate-file string. */
+function stateFromWeather(s?: string): string {
+  const t = String(s || "");
+  const m = t.match(/\b([A-Z]{2})\s+USA\b/) || t.match(/\b([A-Z]{2})\b/);
+  return m && STATE_NAMES[m[1]] ? m[1] : "";
+}
+/** Resolve effective utility rates, auto-sourcing any that are missing/zero
+ *  from the embedded reference tables (EIA rates · ENERGY STAR/eGRID carbon),
+ *  keyed by the project state/ZIP. Returns the values to write to Project Info. */
+function resolveRates(cfg: RateConfig, sample: Row | undefined): { elec: number; gas: number; carbon: number } {
+  const st = (cfg.state || stateFromWeather(sample?.weather_file)).toUpperCase();
+  const zip = cfg.pincode || "";
+  const elec = (cfg.elec_per_kwh && cfg.elec_per_kwh > 0) ? cfg.elec_per_kwh
+    : (EIA_COMM_CENTS_PER_KWH[st] != null ? EIA_COMM_CENTS_PER_KWH[st] / 100 : 0.137);
+  const gas = (cfg.gas_per_therm && cfg.gas_per_therm > 0) ? cfg.gas_per_therm
+    : (EIA_GAS_DOLLARS_PER_THERM[st] != null ? EIA_GAS_DOLLARS_PER_THERM[st] : 0.95);
+  let carbon = (cfg.elec_carbon_per_kwh && cfg.elec_carbon_per_kwh > 0) ? cfg.elec_carbon_per_kwh : 0;
+  if (!carbon) { const sub = subregionFor(st, zip); carbon = sub ? espmElecCarbonPerKwh(sub) : (EGRID_STATE_KG_PER_KWH[st] || 0); }
+  return { elec: +elec.toFixed(4), gas: +gas.toFixed(4), carbon: +carbon.toFixed(4) };
+}
 import templateUrl from "../assets/energy_template.xlsx?url";
 
 /* fetch the bundled template once and reuse the buffer */
@@ -133,7 +155,34 @@ function clearSheetCell(xml: string, addr: string): string {
   });
 }
 
-export interface WorkbookMeta { projectName?: string; }
+import type { ProjectInfo } from "../store";
+export interface WorkbookMeta { projectName?: string; projectInfo?: ProjectInfo | null; }
+
+/** Reset a worksheet so it opens at the top-left: drop any saved scroll position
+ *  (topLeftCell), and on un-frozen sheets snap the active cell back to A1. Frozen-
+ *  pane sheets keep their pane selection (so we don't desync the pane), but lose
+ *  the scroll offset. `tabSelected` is forced on only for the active (PI) sheet. */
+function resetSheetView(xml: string, isActive: boolean): string {
+  // strip saved scroll offsets on both <sheetView> and any <pane>
+  let out = xml.replace(/\stopLeftCell="[^"]*"/g, "");
+  // normalise tabSelected so exactly the active sheet is selected
+  out = out.replace(/\stabSelected="[^"]*"/g, "");
+  out = out.replace(/<sheetView\b([^>]*?)(\/?)>/g, (_m, attrs, selfClose) => {
+    let a = String(attrs);
+    if (isActive && !/\stabSelected=/.test(a)) a = ` tabSelected="1"` + a;
+    return `<sheetView${a}${selfClose}>`;
+  });
+  // on sheets without a frozen pane, move the cursor back to A1
+  out = out.replace(/<sheetView\b([^>]*)>([\s\S]*?)<\/sheetView>/g, (m, attrs, body) => {
+    if (/<pane\b/.test(body)) return m;
+    let nb = body.replace(/<selection\b[^>]*\/>/g, '<selection activeCell="A1" sqref="A1"/>');
+    if (!/<selection/.test(nb)) nb += '<selection activeCell="A1" sqref="A1"/>';
+    return `<sheetView${attrs}>${nb}</sheetView>`;
+  });
+  // a self-closing <sheetView .../> has no children — give it an explicit A1 cursor
+  out = out.replace(/<sheetView\b([^>]*)\/>/g, '<sheetView$1><selection activeCell="A1" sqref="A1"/></sheetView>');
+  return out;
+}
 
 /* Order the baseline rows into the workbook's fixed 8-row layout when the rows
    are human-classified (_cat = leed|code, _rot = 0|90|180|270):
@@ -173,19 +222,56 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
   if (piName) {
     const sample = propRows[0] || blRows[0];
     let pi = await zip.file(paths[piName])!.async("string");
-    if (meta.projectName) pi = setSheetCellValue(pi, "D4", meta.projectName);
-    const cz = sample?.climate_zone;
+    // Project Info metadata — prefer the human-confirmed values from the post-parse
+    // popup (meta.projectInfo); otherwise fall back to the project name / parsed model.
+    const info = meta.projectInfo || {};
+    const name = info.projectName || meta.projectName;
+    if (name) pi = setSheetCellValue(pi, "D4", name);
+    const cz = info.climateZone ?? sample?.climate_zone;
     if (cz != null && cz !== "") pi = setSheetCellValue(pi, "D5", String(cz));
-    const area = sample?.conditioned_floor_area || sample?.total_floor_area;
+    if (info.programType) pi = setSheetCellValue(pi, "D6", info.programType);
+    const area = info.floorArea ?? sample?.conditioned_floor_area ?? sample?.total_floor_area;
     if (typeof area === "number" && area > 0) pi = setSheetCellValue(pi, "D7", area);
-    if (cfg.elec_per_kwh != null && cfg.elec_per_kwh > 0) pi = setSheetCellValue(pi, "I29", cfg.elec_per_kwh);
-    if (cfg.gas_per_therm != null && cfg.gas_per_therm > 0) pi = setSheetCellValue(pi, "J29", cfg.gas_per_therm);
-    if (cfg.elec_carbon_per_kwh != null && cfg.elec_carbon_per_kwh > 0) pi = setSheetCellValue(pi, "I22", cfg.elec_carbon_per_kwh);
+    // Baseline / LEED / code metadata (only written when supplied so the template's
+    // sensible defaults survive when the popup was skipped).
+    if (typeof info.benchmarkEui === "number" && info.benchmarkEui > 0) pi = setSheetCellValue(pi, "D10", info.benchmarkEui);
+    if (typeof info.targetSavings === "number") pi = setSheetCellValue(pi, "D11", info.targetSavings);
+    if (info.leedVersion) pi = setSheetCellValue(pi, "D12", info.leedVersion);
+    if (info.leedType) pi = setSheetCellValue(pi, "D13", info.leedType);
+    if (info.leedSubcategory) pi = setSheetCellValue(pi, "D14", info.leedSubcategory);
+    if (info.energyCodeStandard) pi = setSheetCellValue(pi, "D15", info.energyCodeStandard);
+    if (info.energyCodeProcessLoads) pi = setSheetCellValue(pi, "D16", info.energyCodeProcessLoads);
+    // Performance Goals table — D=LEED, E=Code; rows 20 energy / 21 carbon / 22 cost.
+    if (typeof info.energyGoalLeed === "number") pi = setSheetCellValue(pi, "D20", info.energyGoalLeed);
+    if (typeof info.energyGoalCode === "number") pi = setSheetCellValue(pi, "E20", info.energyGoalCode);
+    if (typeof info.carbonGoalLeed === "number") pi = setSheetCellValue(pi, "D21", info.carbonGoalLeed);
+    if (typeof info.carbonGoalCode === "number") pi = setSheetCellValue(pi, "E21", info.carbonGoalCode);
+    if (typeof info.costGoalLeed === "number") pi = setSheetCellValue(pi, "D22", info.costGoalLeed);
+    if (typeof info.costGoalCode === "number") pi = setSheetCellValue(pi, "E22", info.costGoalCode);
+    // QA/QC
+    if (info.author) pi = setSheetCellValue(pi, "D26", info.author);
+    if (info.date) pi = setSheetCellValue(pi, "D27", info.date);
+    if (typeof info.uncertaintyFactor === "number") pi = setSheetCellValue(pi, "D28", info.uncertaintyFactor);
+    // Auto-source any missing/zero rate from our utility-rate tables so the
+    // workbook's cost/carbon calc chain is never left blank.
+    const rr = resolveRates(cfg, sample);
+    if (rr.elec > 0) pi = setSheetCellValue(pi, "I29", rr.elec);
+    if (rr.gas > 0) pi = setSheetCellValue(pi, "J29", rr.gas);
+    if (rr.carbon > 0) {
+      // Carbon Emissions Method (I19) → "Enter Flat Rate" so the workbook uses the
+      // flat electricity carbon factor we supply (resolved from the ZIP/eGRID
+      // subregion) rather than a virtual rate that can't be derived.
+      pi = setSheetCellValue(pi, "I19", "Enter Flat Rate");
+      pi = setSheetCellValue(pi, "I22", rr.carbon);   // kg CO2e / kWh
+    }
     // Site-to-Source ratios (Project Info row 16: I=Electricity, J=Gas, K=Additional
     // Fuel, L=District Cooling, M=District Heating). ENERGY STAR source-to-site
-    // ratios are national (one U.S. set, one Canadian); we resolve the set from the
-    // project's pincode/state. A non-U.S. or undetermined location → leave blank.
-    const sts = siteToSourceFor(cfg.pincode, cfg.state);
+    // ratios are national (one U.S. set, one Canadian); resolve the set from the
+    // project pincode/state — falling back to the state parsed from the model's
+    // weather file (e.g. "… CA USA …") so the Source Energy charts aren't left
+    // empty when no address was entered.
+    const stForSts = cfg.state || stateFromWeather(sample?.weather_file);
+    const sts = siteToSourceFor(cfg.pincode, stForSts);
     if (sts) {
       pi = setSheetCellValue(pi, "I16", sts.elec);
       pi = setSheetCellValue(pi, "J16", sts.gas);
@@ -200,14 +286,32 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
   }
 
   // Force Excel to recompute every formula (and thus refresh the SiteE/SourceE/
-  // Carbon/Cost charts and Report/Input-Summary tables) the moment it opens.
+  // Carbon/Cost charts and Report/Input-Summary tables) the moment it opens, and
+  // open the workbook on the Project Info sheet (sheet index 1, after Home).
   const wbFile = zip.file("xl/workbook.xml");
   if (wbFile) {
     let wbXml = await wbFile.async("string");
     wbXml = /<calcPr[^>]*\/>/.test(wbXml)
       ? wbXml.replace(/<calcPr[^>]*\/>/, '<calcPr calcId="191028" fullCalcOnLoad="1"/>')
       : wbXml.replace("</workbook>", '<calcPr calcId="191028" fullCalcOnLoad="1"/></workbook>');
+    const piIndex = Object.keys(paths).findIndex((n) => /project\s*info/i.test(n));
+    if (piIndex >= 0) {
+      wbXml = wbXml.replace(/(<workbookView\b[^>]*?)\s*\/>/, (_m, head) => {
+        let h = String(head).replace(/\sfirstSheet="[^"]*"/, "").replace(/\sactiveTab="[^"]*"/, "");
+        return `${h} firstSheet="0" activeTab="${piIndex}"/>`;
+      });
+    }
     zip.file("xl/workbook.xml", wbXml);
+  }
+
+  // Open every sheet scrolled to its top-left corner: strip any saved scroll
+  // position (topLeftCell) and, for un-frozen sheets, reset the active cell to A1.
+  // Make Project Info the only tab-selected sheet so it matches activeTab above.
+  const piPath = piName ? paths[piName] : "";
+  for (const f of zip.file(/^xl\/worksheets\/sheet\d+\.xml$/) as JSZip.JSZipObject[]) {
+    let sx = await f.async("string");
+    sx = resetSheetView(sx, f.name === piPath);
+    zip.file(f.name, sx);
   }
 
   return zip.generateAsync({
