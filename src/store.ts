@@ -67,7 +67,7 @@ export const store: AppState = {
   // Hardcoded data-source keys (overridable via the settings popup).
   nrelKey: localStorage.getItem("ep_nrel_key") || "dYog29kfBgadw04fZZ9SfIZs76naSgMYubOwR9C6",
   eiaKey: localStorage.getItem("ep_eia_key") || "dcOTZpVO8P7hPsBKiv9PJvmqGw3gSjxuWa4jqrcV",
-  openaiKey: localStorage.getItem("ep_openai_key") || "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",
+  openaiKey: localStorage.getItem("ep_openai_key") || "",
   openaiModel: localStorage.getItem("ep_openai_model") || "gpt-4o-mini",
   trace: null,
   currentProject: null,
