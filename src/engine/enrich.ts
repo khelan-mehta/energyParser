@@ -12,6 +12,11 @@ const KWH_TO_KBTU = 3.412, THERM_TO_KBTU = 100;
 export function enrichRow(data: Row, cfg: RateConfig): Row {
   const elec_kbtu = data.electricity_kbtu || 0, gas_kbtu = data.gas_kbtu || 0;
   const cond_area = data.conditioned_floor_area || data.total_floor_area || 1;
+  // A fuel/utility's virtual rate is only meaningful (and only shown) when the model
+  // actually uses it. With no district / additional-fuel energy, leave those rates at
+  // 0 so the workbook renders "-" instead of a bogus default factor (e.g. 0.29).
+  const hasDC = (data.district_cooling_kbtu || 0) > 0;
+  const hasDH = (data.district_heating_kbtu || 0) > 0;
 
   /* ---- RATES: model (flat) → manual/suggested → 0 ---- */
   let elec_rate_per_kbtu = 0, gas_rate_per_kbtu = 0;
@@ -97,10 +102,10 @@ export function enrichRow(data: Row, cfg: RateConfig): Row {
   const extra: Row = {
     total_cost, cost_intensity,
     elec_rate_per_kbtu, gas_rate_per_kbtu, rate_structure, rate_source,
-    add_fuel_rate_per_kbtu: 0, dc_rate_per_kbtu: cfg.dc_rate_per_kbtu || 0, dh_rate_per_kbtu: cfg.dh_rate_per_kbtu || 0,
+    add_fuel_rate_per_kbtu: 0, dc_rate_per_kbtu: hasDC ? (cfg.dc_rate_per_kbtu || 0) : 0, dh_rate_per_kbtu: hasDH ? (cfg.dh_rate_per_kbtu || 0) : 0,
     total_carbon_kg: total_carbon, carbon_intensity, carbon_method, carbon_source,
     elec_carbon_rate: elec_carbon_per_kbtu, gas_carbon_rate: gas_carbon_per_kbtu,
-    add_fuel_carbon_rate: 0, dc_carbon_rate: cfg.dc_carbon_per_kbtu || 0, dh_carbon_rate: cfg.dh_carbon_per_kbtu || 0,
+    add_fuel_carbon_rate: 0, dc_carbon_rate: hasDC ? (cfg.dc_carbon_per_kbtu || 0) : 0, dh_carbon_rate: hasDH ? (cfg.dh_carbon_per_kbtu || 0) : 0,
     water_rate_per_kgal, total_water_cost, water_use_intensity,
     location_name: cfg.location_name || "",
     additional_fuel_kbtu: 0, district_cooling_kbtu: data.district_cooling_kbtu || 0, district_heating_kbtu: data.district_heating_kbtu || 0,

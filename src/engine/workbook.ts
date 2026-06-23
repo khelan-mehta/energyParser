@@ -208,6 +208,14 @@ function baselineLayout(blRows: Row[]): (Row | null)[] {
 export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateConfig, meta: WorkbookMeta = {}): Promise<Blob> {
   const zip = await JSZip.loadAsync(await loadTemplate());
   const paths = await sheetPathMap(zip);
+  // Does the project actually use additional fuel / district energy? When it does
+  // not, the Additional-Fuel / District-Cooling / District-Heating factor columns
+  // must read "-" (not the template's bogus 1.00 / 0.91 defaults).
+  const allRows = [...blRows, ...propRows];
+  const usesFuel = (k: keyof Row) => allRows.some((r) => typeof r[k] === "number" && (r[k] as number) > 0);
+  const hasAddFuel = usesFuel("additional_fuel_kbtu");
+  const hasDistCool = usesFuel("district_cooling_kbtu");
+  const hasDistHeat = usesFuel("district_heating_kbtu");
   const blName = Object.keys(paths).find((n) => /^bl\s*data/i.test(n)) || Object.keys(paths).find((n) => /^bl/i.test(n));
   const propName = Object.keys(paths).find((n) => /^proposed\s*data/i.test(n)) || Object.keys(paths).find((n) => /proposed/i.test(n));
   if (blName) zip.file(paths[blName], injectSheet(await zip.file(paths[blName])!.async("string"), baselineLayout(blRows), cfg));
@@ -282,7 +290,30 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
     } else {
       for (const a of ["I16", "J16", "K16", "L16", "M16", "N16"]) pi = clearSheetCell(pi, a);
     }
+    // When a fuel/utility isn't used by the project, blank its factor columns across
+    // Site-to-Source (row 16), Carbon kg CO2e (row 22) and Unit Cost (row 29) so they
+    // render "-" instead of the template's leftover values (K=Add. Fuel, L=District
+    // Cooling, M=District Heating).
+    if (!hasAddFuel) for (const a of ["K16", "K22", "K29"]) pi = clearSheetCell(pi, a);
+    if (!hasDistCool) for (const a of ["L16", "L22", "L29"]) pi = clearSheetCell(pi, a);
+    if (!hasDistHeat) for (const a of ["M16", "M22", "M29"]) pi = clearSheetCell(pi, a);
     zip.file(paths[piName], pi);
+  }
+
+  // Input Summary — the "Building Parameters" area cells (F4 Conditioned · F5 Total)
+  // are driven by fragile INDEX/MATCH formulas that key on the "(ft²)" unit string;
+  // they collide and BOTH return blank on recalc. Write the areas directly (they're
+  // already correct on the Proposed Data tab) so the summary isn't empty.
+  const isName = Object.keys(paths).find((n) => /input\s*summary/i.test(n));
+  if (isName) {
+    const sample = propRows[0] || blRows[0];
+    const cond = (meta.projectInfo?.floorArea) ?? sample?.conditioned_floor_area;
+    const total = sample?.total_floor_area ?? cond;
+    let is = await zip.file(paths[isName])!.async("string");
+    let touched = false;
+    if (typeof cond === "number" && cond > 0) { is = setSheetCellValue(is, "F4", cond); touched = true; }
+    if (typeof total === "number" && total > 0) { is = setSheetCellValue(is, "F5", total); touched = true; }
+    if (touched) zip.file(paths[isName], is);
   }
 
   // Force Excel to recompute every formula (and thus refresh the SiteE/SourceE/

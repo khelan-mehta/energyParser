@@ -352,11 +352,18 @@ export async function identifyLocation(lat: number, lon: number): Promise<Locati
 export async function geocodeAddress(parts: { city?: string; state?: string; country?: string; pincode?: string }): Promise<LocationInfo & { lat: number; lon: number }> {
   const q = [parts.city, parts.state, parts.pincode, parts.country].filter(Boolean).join(", ");
   if (!q.trim()) throw new Error("enter a city, state or pincode first");
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&addressdetails=1&limit=1`;
+  // This tool is US-based (EIA rates · EPA eGRID state factors · LEED), so constrain
+  // the geocode to the US — otherwise a 6-digit pincode like 400052 matches Mumbai,
+  // India. Allow Canada only when the caller explicitly asks for it.
+  const cc = /canada/i.test(parts.country || "") ? "ca" : "us";
+  // A US ZIP is exactly 5 digits — reject an obviously non-US pincode up front.
+  if (cc === "us" && parts.pincode && !parts.city && !parts.state && !/^\d{5}$/.test(parts.pincode.trim()))
+    throw new Error(`"${parts.pincode}" isn't a US ZIP code (expected 5 digits)`);
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&countrycodes=${cc}&addressdetails=1&limit=1`;
   const resp = await fetch(url, { headers: { Accept: "application/json" } });
   if (!resp.ok) throw new Error(`geocode HTTP ${resp.status}`);
   const arr = await resp.json();
-  if (!arr || !arr.length) throw new Error(`no match for "${q}"`);
+  if (!arr || !arr.length) throw new Error(`no US match for "${q}" — enter a valid US ZIP code`);
   const item = arr[0];
   const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
   const a = item.address || {};

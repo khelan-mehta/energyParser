@@ -82,6 +82,8 @@ export interface TraceReport {
   envelope: Record<string, EnvelopeData>;
   energyCostBaseline: number; energyCostProposed: number;
   baselineFanKw: number;
+  infilByAlt: Record<string, number>;   // Σ per-zone "Infiltration cfm" by alternative
+  fanKwByAlt: Record<string, number>;   // Σ modeled supply/exhaust fan kW by alternative
   annualEnergy: AnnualEnergyRow[];
   siteConsumption: SiteConsumption[];
   lighting: LightingDaylight[];
@@ -118,7 +120,7 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   const warnings: string[] = [];
   const report: TraceReport = {
     fileName, pageCount: pages.length, alternatives: [],
-    general: null, baselineRotations: null, utilityRates: null, envelope: {}, energyCostBaseline: 0, energyCostProposed: 0, baselineFanKw: 0,
+    general: null, baselineRotations: null, utilityRates: null, envelope: {}, energyCostBaseline: 0, energyCostProposed: 0, baselineFanKw: 0, infilByAlt: {}, fanKwByAlt: {},
     annualEnergy: [], siteConsumption: [], lighting: [], projectSummary: [], economic: [],
     monthlyElectricity: null, unmetHeatingHours: null, warnings,
   };
@@ -176,6 +178,20 @@ export function parseTrace(pages: TracePage[], fileName: string): TraceReport {
   for (const p of pages) if (p.text.includes("Baseline PRM Fan Power"))
     for (const m of p.text.matchAll(/Allowed Fan Power\s*:?\s*([\d.]+)\s*kW/g)) fanKw += +m[1];
   report.baselineFanKw = Math.round(fanKw * 100) / 100;
+
+  // ---- Per-alternative infiltration airflow + actual (modeled) fan power ----
+  for (const p of pages) {
+    const alt = (p as any).alt || altOf(p.text); if (!alt) continue;
+    // Each zone's "Infiltration cfm N" shows in both its cooling and heating airflow
+    // boxes (same value); the per-alt sum is halved later to undo that duplication.
+    let inf = 0; for (const m of p.text.matchAll(/Infiltration cfm\s+([\d,]+)/g)) inf += +m[1].replace(/,/g, "");
+    if (inf) report.infilByAlt[alt] = (report.infilByAlt[alt] || 0) + inf;
+    // Modeled fan Power (kW) = the column right after the fan's flow rate (cfm).
+    let fk = 0;
+    for (const m of p.text.matchAll(/(?:SUPPLY|EXHAUST) FAN\s+(?:Zone|System)\s+(?:[\d.]+|N\/A)\s+(?:N\/A|[\d.]+)\s+[\d.]+\s+[\d,]+\s+(N\/A|\d*\.\d+)/g))
+      if (m[1] !== "N/A") fk += parseFloat(m[1]);
+    if (fk) report.fanKwByAlt[alt] = (report.fanKwByAlt[alt] || 0) + fk;
+  }
 
   // ---- Economic ----
   const ec = pages.find((p) => p.text.startsWith("Economic Alternative Comparison"));
@@ -498,7 +514,25 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
   // ---- Baseline fan power (Baseline PRM Fan Power) ----
   if (isBaseline && r.baselineFanKw > 0) row.total_fan_kw = r.baselineFanKw;
 
+  // ---- Infiltration rate — Σ design zone infiltration cfm (÷2 for the cooling+
+  //      heating duplication) ÷ gross wall (facade) area → CFM/ft² facade. ----
+  const infSum = altLookupNum(r.infilByAlt, site.alternative || "", isBaseline);
+  const facade = row.gross_wall_area || row.above_ground_wall_area || 0;
+  if (infSum > 0 && facade > 0) row.infil_cfm_ft2 = +((infSum / 2) / facade).toFixed(3);
+
+  // ---- Proposed fan power — Σ modeled supply/exhaust fan kW (baseline keeps the
+  //      PRM "Allowed Fan Power" above; the proposed had none until now). ----
+  if (!isBaseline) { const fk = altLookupNum(r.fanKwByAlt, site.alternative || "", false); if (fk > 0) row.total_fan_kw = +fk.toFixed(2); }
+
   return row;
+}
+
+/** Look up a per-alternative aggregate by exact name, else by baseline/non-baseline. */
+function altLookupNum(map: Record<string, number>, alt: string, isBaseline: boolean): number {
+  if (map[alt] != null) return map[alt];
+  const baselineKey = (k: string) => /baseline|code|ashrae\s*90\.1/i.test(k);
+  const hit = Object.keys(map).find((k) => (isBaseline ? baselineKey(k) : !baselineKey(k)));
+  return hit ? map[hit] : 0;
 }
 
 /** Pick the envelope set for an alternative: exact name, else a baseline/non-baseline
