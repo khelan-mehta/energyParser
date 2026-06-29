@@ -192,7 +192,7 @@ function generateCard(root: HTMLElement): HTMLElement {
       const restored = applyDraft(schema, draft);
       log(`Mockup: ${schema.sheets.length} sheets · auto-filled ${n + m} field(s) (${m} from the energy model)${restored ? ` · restored ${restored} from draft` : ""}.`);
       openMepcMockup({
-        schema, xlsmBuf: buf, projectName: ctx.projectName,
+        schema, xlsmBuf: buf, projectName: ctx.projectName, ctx,
         onSaveDraft: async (sch) => {
           const d = serializeDraft(sch);
           if (proj) { await Projects.update(proj.id, { mepcDraft: d } as any); (proj as any).mepcDraft = d; }

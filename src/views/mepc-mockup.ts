@@ -10,13 +10,15 @@
 import { h, esc, toast } from "../ui/util";
 import { ICON } from "../ui/icons";
 import type { MepcSchema, MepcField, MepcSheetSchema, MepcGridCell } from "../engine/mepc-schema";
-import { numToCol } from "../engine/mepc-schema";
+import { numToCol, SHEET_TITLE } from "../engine/mepc-schema";
 import { populateMepc, isWritable } from "../engine/mepc-populate";
+import { fieldGuidance, GuidanceCtx } from "../engine/mepc-guidance";
 
 export interface MepcMockupOpts {
   schema: MepcSchema;
   xlsmBuf: ArrayBuffer;
   projectName?: string;
+  ctx?: GuidanceCtx;
   onSaveDraft?: (schema: MepcSchema) => void | Promise<void>;
   onDigest?: (files: File[], schema: MepcSchema, refresh: () => void) => void | Promise<void>;
 }
@@ -30,6 +32,7 @@ function displayValue(f: MepcField): string {
 
 export function openMepcMockup(opts: MepcMockupOpts) {
   const { schema } = opts;
+  const ctx = opts.ctx || {};
   let active = 0;
   const fid = (si: number, cell: string) => `mm-${si}-${cell}`;
   const countFilled = () => { let f = 0, t = 0; for (const s of schema.sheets) for (const fl of s.fields) { t++; if (!isEmpty(fl)) f++; } return { f, t }; };
@@ -80,54 +83,87 @@ export function openMepcMockup(opts: MepcMockupOpts) {
   const renderTabs = () => {
     tabsEl.innerHTML = schema.sheets.map((s, i) => {
       const empty = s.fields.filter(isEmpty).length;
-      return `<button class="mm-tab ${i === active ? "active" : ""}" data-i="${i}">${esc(s.name)}<span class="mm-tab-badge ${empty ? "" : "done"}">${s.fields.length - empty}/${s.fields.length}</span></button>`;
+      return `<button class="mm-tab ${i === active ? "active" : ""}" data-i="${i}">${esc(SHEET_TITLE[s.name] || s.name)}<span class="mm-tab-badge ${empty ? "" : "done"}">${s.fields.length - empty}/${s.fields.length}</span></button>`;
     }).join("");
     tabsEl.querySelectorAll<HTMLElement>(".mm-tab").forEach((t) => t.addEventListener("click", () => { active = +t.dataset.i!; renderTabs(); renderBody(); }));
   };
 
+  /** set a field's value from the guidance panel (option chip / suggestion). */
+  const applyValue = (f: MepcField, value: string | number, source: string) => {
+    f.value = value; f.filled = true; f.source = source;
+    const input = overlay.querySelector("#" + CSS.escape(fid(active, f.cell))) as HTMLInputElement | HTMLSelectElement | null;
+    if (input) {
+      input.value = (f.type === "percent" && typeof value === "number") ? String(+(value * 100).toFixed(4)) : String(value);
+      const td = input.closest(".mm-fld") as HTMLElement; td?.classList.remove("empty"); td?.classList.add("filled");
+    }
+    showInfo(f); paintCount(); renderTabBadges();
+  };
+
+  // bottom guidance panel — explains the focused field and how to fill it
   const showInfo = (f: MepcField) => {
-    const opts = f.options?.length ? ` · options: ${f.options.slice(0, 8).map(esc).join(" / ")}${f.options.length > 8 ? "…" : ""}` : "";
-    const src = !isEmpty(f) && f.source ? ` · <b style="color:#166534">source: ${esc(f.source)}</b>` : "";
-    infoEl.innerHTML = `<b>${esc(f.label || "(unlabeled)")}</b> <span class="mm-info-ref">cell ${f.cell} · ${esc(f.type)}</span>${opts}${src}`;
+    const g = fieldGuidance(f, ctx);
+    const filled = !isEmpty(f);
+    let html = `<div class="mm-info-hd"><b>${esc(f.label || "(unlabeled)")}</b><span class="mm-info-ref">${f.cell} · ${esc(f.type)}${g.unit ? " · " + esc(g.unit) : ""}</span>${filled && f.source ? `<span class="mm-src-tag">${esc(f.source)}</span>` : ""}</div>`;
+    html += `<div class="mm-tip">💡 ${esc(g.tip)}</div>`;
+    if ((f.type === "dropdown" || f.type === "checkbox") && f.options?.length) {
+      html += `<div class="mm-opts">${f.options.map((o, i) => `<button class="mm-opt${String(f.value) === o ? " on" : ""}" data-i="${i}">${esc(o)}</button>`).join("")}</div>`;
+    } else if (g.suggestion != null && !filled) {
+      html += `<div class="mm-sug">Suggested${g.suggestionLabel ? " (" + esc(g.suggestionLabel) + ")" : ""}: <b>${esc(String(g.suggestion))}</b> <button class="mm-sug-use">Use</button></div>`;
+    }
+    infoEl.innerHTML = html;
+    infoEl.querySelectorAll<HTMLElement>(".mm-opt").forEach((b) => b.addEventListener("click", () => applyValue(f, f.options![+b.dataset.i!], "Manual edit")));
+    const use = infoEl.querySelector(".mm-sug-use"); if (use && g.suggestion != null) use.addEventListener("click", () => applyValue(f, g.suggestion!, "Suggested · " + (g.suggestionLabel || "")));
   };
 
   const controlHtml = (f: MepcField, id: string): string => {
+    // hover tooltip = the calculator's own field guidance ("how to fill")
+    const tip = esc(`${f.label || f.cell} — ${fieldGuidance(f, ctx).tip}`);
     if (f.type === "dropdown" || f.type === "checkbox") {
       const opts = (f.options || []).map((o) => `<option value="${esc(o)}" ${String(f.value) === o ? "selected" : ""}>${esc(o)}</option>`).join("");
-      return `<select class="mm-cell-input" id="${id}" data-cell="${f.cell}"><option value=""></option>${opts}</select>`;
+      return `<select class="mm-cell-input" id="${id}" data-cell="${f.cell}" title="${tip}"><option value=""></option>${opts}</select>`;
     }
     const type = (f.type === "number" || f.type === "percent") ? "number" : "text";
     const step = f.type === "percent" ? ' step="0.1"' : (f.type === "number" ? ' step="any"' : "");
-    return `<input class="mm-cell-input" id="${id}" type="${type}"${step} value="${esc(displayValue(f))}" data-cell="${f.cell}" title="${esc(f.label)} (${f.cell})" />${f.type === "percent" ? '<span class="mm-pct">%</span>' : ""}`;
+    return `<input class="mm-cell-input" id="${id}" type="${type}"${step} value="${esc(displayValue(f))}" data-cell="${f.cell}" title="${tip}" />${f.type === "percent" ? '<span class="mm-pct">%</span>' : ""}`;
   };
 
+  // Stacked, responsive layout (no horizontal scroll): each sheet row becomes a
+  // form group — section headers for bold label rows, a single label+control for
+  // simple rows, and a labelled set of controls (by column header) for table rows.
   const renderSheet = (sheet: MepcSheetSchema): string => {
     const g = sheet.grid;
     const fieldByCell = new Map(sheet.fields.map((f) => [f.cell, f]));
-    const colgroup = `<colgroup><col style="width:34px">${g.cols.map((c) => `<col style="width:${g.colWidths[c]}px">`).join("")}</colgroup>`;
-    const header = `<tr class="mm-xl-head"><th></th>${g.cols.map((c) => `<th>${numToCol(c)}</th>`).join("")}</tr>`;
     const byRow = new Map<number, MepcGridCell[]>();
-    for (const cell of g.cells) { const a = byRow.get(cell.r) || []; a.push(cell); byRow.set(cell.r, a); }
-    const body = g.rows.map((r) => {
+    const textByCol = new Map<number, { r: number; t: string }[]>();   // for column-header lookup
+    for (const cell of g.cells) {
+      const a = byRow.get(cell.r) || []; a.push(cell); byRow.set(cell.r, a);
+      if (!cell.input && cell.text) { const arr = textByCol.get(cell.c) || []; arr.push({ r: cell.r, t: cell.text }); textByCol.set(cell.c, arr); }
+    }
+    const colHeader = (col: number, row: number) => { const arr = textByCol.get(col); if (!arr) return ""; let best = ""; for (const x of arr) if (x.r < row) best = x.t; return best; };
+
+    let out = "";
+    for (const r of g.rows) {
       const cells = (byRow.get(r) || []).sort((a, b) => a.c - b.c);
-      const tds = cells.map((cell) => {
-        const span = `${cell.colspan > 1 ? ` colspan="${cell.colspan}"` : ""}${cell.rowspan > 1 ? ` rowspan="${cell.rowspan}"` : ""}`;
-        if (cell.input && cell.fieldCell) {
-          const f = fieldByCell.get(cell.fieldCell); if (!f) return `<td${span}></td>`;
-          const filled = !isEmpty(f);
-          return `<td${span} class="mm-in ${filled ? "filled" : "empty"}" data-fc="${cell.fieldCell}">${controlHtml(f, fid(active, cell.fieldCell))}</td>`;
-        }
-        const st: string[] = [];
-        if (cell.fill && cell.fill !== "#FFFFFF") st.push(`background:${cell.fill}`);
-        if (cell.bold) st.push("font-weight:700");
-        if (cell.align) st.push(`text-align:${cell.align}`);
-        const style = st.length ? ` style="${st.join(";")}"` : "";
-        return `<td${span} class="mm-lbl"${style} title="${esc(cell.text)}">${esc(cell.text)}</td>`;
+      const inputs = cells.filter((c) => c.input && c.fieldCell);
+      // build the row label from its text cells, skipping column A and the
+      // calculator's single-letter print markers ("G").
+      const labelTxt = cells.filter((c) => !c.input && c.text && c.c > 1 && !/^[A-Z]$/.test(c.text.trim())).map((c) => c.text).join("  ").replace(/\s+/g, " ").trim();
+      if (!inputs.length) {
+        if (labelTxt && cells.some((c) => c.bold)) out += `<div class="mm-sec">${esc(labelTxt)}</div>`;
+        else if (labelTxt && labelTxt.length > 45) out += `<div class="mm-note">${esc(labelTxt)}</div>`;
+        continue;
+      }
+      const flds = inputs.map((cell) => {
+        const f = fieldByCell.get(cell.fieldCell!); if (!f) return "";
+        const cap = (inputs.length > 1 ? (colHeader(cell.c, r) || f.label) : (labelTxt || f.label)) || f.cell;
+        const filled = !isEmpty(f);
+        return `<div class="mm-fld ${filled ? "filled" : "empty"}" data-fc="${cell.fieldCell}"><label class="mm-fld-lab" title="${esc(f.label || cap)}">${esc(cap)}</label>${controlHtml(f, fid(active, cell.fieldCell!))}</div>`;
       }).join("");
-      const rowHidden = cells.length > 0 && cells[0].hidden;
-      return `<tr class="${rowHidden ? "mm-rowhidden" : ""}"><th class="mm-xl-rownum"${rowHidden ? ' title="conditional row — collapsed in Excel"' : ""}>${r}</th>${tds}</tr>`;
-    }).join("");
-    return `<table class="mm-xl">${colgroup}<thead>${header}</thead><tbody>${body}</tbody></table>`;
+      out += (inputs.length > 1 && labelTxt)
+        ? `<div class="mm-grp"><div class="mm-grp-lab">${esc(labelTxt)}</div><div class="mm-grp-flds">${flds}</div></div>`
+        : `<div class="mm-grp-flds">${flds}</div>`;
+    }
+    return out || `<div class="mm-note">No editable fields on this sheet.</div>`;
   };
 
   const wireInputs = () => {
@@ -136,7 +172,7 @@ export function openMepcMockup(opts: MepcMockupOpts) {
       const id = fid(active, f.cell);
       const input = overlay.querySelector("#" + CSS.escape(id)) as HTMLInputElement | HTMLSelectElement | null;
       if (!input) continue;
-      const td = input.closest("td") as HTMLElement;
+      const td = input.closest(".mm-fld") as HTMLElement;
       const onEdit = () => {
         const raw = input.value.trim();
         if (raw === "") { f.value = null; f.filled = false; f.source = undefined; }
@@ -163,7 +199,7 @@ export function openMepcMockup(opts: MepcMockupOpts) {
     if (si !== active) { active = si; renderTabs(); renderBody(); }
     const id = fid(si, f.cell);
     const input = overlay.querySelector("#" + CSS.escape(id)) as HTMLElement | null;
-    const td = input?.closest("td") as HTMLElement;
+    const td = input?.closest(".mm-fld") as HTMLElement;
     td?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
     td?.classList.add("flash"); setTimeout(() => td?.classList.remove("flash"), 1200);
     (input as HTMLInputElement)?.focus(); if (input) showInfo(f);

@@ -30,6 +30,7 @@ export interface MepcField {
   filled: boolean;         // has a non-empty, non-formula value
   source?: string;         // provenance once auto/AI/manually filled
   hidden?: boolean;        // lives in a collapsed/conditional row in the template
+  help?: string;           // calculator's own guidance (data-validation prompt)
 }
 
 /* A display cell in the Excel-faithful grid (anchors only; merged members omitted). */
@@ -54,11 +55,25 @@ export interface MepcSchema { sheets: MepcSheetSchema[]; }
 
 /* Sheets we surface in the mockup — everything AFTER "EFLH Calculator"
    (General Information / Multiple Buildings / Schedules / EFLH are excluded). */
-const INPUT_SHEETS = new Set([
-  "Multifamily Details", "Opaque Assemblies", "Shading and Fenestration", "Envelope Assumptions",
-  "Lighting", "Lighting Assumptions", "Process Loads", "Service Water Heating",
-  "General HVAC", "Air-Side HVAC", "Water-Side HVAC", "Results from eQuest", "Results from Trace",
-]);
+// The sheets surfaced in the mockup, in display order. The model-derived
+// sheets (energy results, envelope, lighting) come first so the auto-fill is
+// front-and-centre; "Performance Outputs" (utility rates / renewables /
+// exceptional calcs — mostly manual) comes last.
+const SHEET_ORDER = [
+  "General Information", "Results from eQuest", "Shading and Fenestration",
+  "Opaque Assemblies", "Lighting", "Process Loads", "Performance_Outputs_1",
+];
+const INPUT_SHEETS = new Set(SHEET_ORDER);
+/** Friendly tab title for a raw sheet name. */
+export const SHEET_TITLE: Record<string, string> = {
+  "General Information": "General Information",
+  "Results from eQuest": "Energy Results",
+  "Shading and Fenestration": "Shading & Fenestration",
+  "Opaque Assemblies": "Opaque Assemblies",
+  "Lighting": "Lighting",
+  "Process Loads": "Process Loads",
+  "Performance_Outputs_1": "Performance Outputs",
+};
 
 /* ---------- small column helpers ---------- */
 export function colToNum(c: string): number { let n = 0; for (const ch of c) n = n * 26 + (ch.charCodeAt(0) - 64); return n; }
@@ -203,12 +218,14 @@ function resolveListRef(ref: string, sheetCells: Map<string, Map<string, Cell>>,
   for (let rr = r1; rr <= r2; rr++) for (let cc = c1; cc <= c2; cc++) { const cell = cells.get(numToCol(cc) + rr); const v = cell?.value; if (v != null && v !== "") out.push(String(v)); }
   return out.length ? out : null;
 }
-function parseValidations(xml: string, sheetCells: Map<string, Map<string, Cell>>, defined: Map<string, string>): Map<string, { type: string; options?: string[] }> {
-  const out = new Map<string, { type: string; options?: string[] }>();
+function parseValidations(xml: string, sheetCells: Map<string, Map<string, Cell>>, defined: Map<string, string>): Map<string, { type: string; options?: string[]; prompt?: string }> {
+  const out = new Map<string, { type: string; options?: string[]; prompt?: string }>();
   for (const m of xml.matchAll(/<dataValidation\b([^>]*)(?:\/>|>([\s\S]*?)<\/dataValidation>)/g)) {
     const head = m[1], body = m[2] || "";
     const type = (head.match(/type="([^"]+)"/) || [])[1] || "";
     const sqref = (head.match(/sqref="([^"]+)"/) || [])[1] || "";
+    const promptRaw = (head.match(/\bprompt="([^"]*)"/) || [])[1];
+    const prompt = promptRaw ? decodeXml(promptRaw).replace(/\s+/g, " ").trim() : undefined;
     const f1 = (body.match(/<formula1>([\s\S]*?)<\/formula1>/) || [])[1];
     let options: string[] | undefined;
     if (type === "list" && f1) {
@@ -225,7 +242,7 @@ function parseValidations(xml: string, sheetCells: Map<string, Map<string, Cell>
       // never let a broken/option-less validation (e.g. a stray #REF!) clobber one
       // that successfully resolved its dropdown options
       if (prev && prev.options && prev.options.length && !(options && options.length)) continue;
-      out.set(a, { type, options });
+      out.set(a, { type, options, prompt: prompt || prev?.prompt });
     }
   }
   return out;
@@ -239,7 +256,7 @@ function parseColWidths(xml: string): Record<number, number> {
     if (!isFinite(width)) continue;
     const mn = +(m[0].match(/min="(\d+)"/) || [])[1], mx = +(m[0].match(/max="(\d+)"/) || [])[1];
     const px = Math.round(width * 7 + 5);
-    for (let c = mn; c <= mx && c <= 64; c++) w[c] = px;
+    for (let c = mn; c <= mx && c <= 80; c++) w[c] = px;
   }
   return w;
 }
@@ -260,7 +277,7 @@ function buildGrid(
     const meaningful = (cell.value != null && cell.value !== "") || style.unlocked.has(cell.style);
     if (meaningful) { if (cell.row > maxRow) maxRow = cell.row; if (cn > maxCol) maxCol = cn; }
   }
-  maxCol = Math.min(maxCol, 64); // safety cap against stray far columns (wide Results sheets reach ~62)
+  maxCol = Math.min(maxCol, 80); // safety cap against stray far columns (the energy-results sheet reaches col BX=76)
   const cols: number[] = []; for (let c = 1; c <= maxCol; c++) if (!hidden.cols.has(c)) cols.push(c);
   // visible rows + any hidden row that carries an input (conditional sections)
   const rows: number[] = []; for (let r = 1; r <= maxRow; r++) { if (!hidden.rows.has(r) || inputRows.has(r)) rows.push(r); }
@@ -318,6 +335,9 @@ export async function extractMepcSchema(xlsmBuf: ArrayBuffer): Promise<MepcSchem
     const { anchorOf, refOf } = parseMerges(xml);
     const hidden = parseHidden(xml);
     const validations = parseValidations(xml, allCells, defined);
+    // columns holding the optional "Additional Notes" entries — skip them entirely
+    const noteCols = new Set<number>();
+    for (const cell of cells.values()) if (typeof cell.value === "string" && /^additional notes/i.test(cell.value)) noteCols.add(colToNum(cell.col));
     const seen = new Set<string>();
     const fields: MepcField[] = [];
 
@@ -343,11 +363,13 @@ export async function extractMepcSchema(xlsmBuf: ArrayBuffer): Promise<MepcSchem
 
       const value = cell.isFormula ? null : cell.value;              // ignore formula-driven defaults
       const filled = value != null && value !== "";
+      if (noteCols.has(colN)) continue;                              // optional "Additional Notes" column — skip
+      const label = findLabel(cells, colN, row, style.unlocked);
       fields.push({
         sheet: name, cell: anchor, ref: refOf.get(anchor) || anchor, row, col: colN,
-        label: findLabel(cells, colN, row, style.unlocked),
-        type, options: dv?.options,
+        label, type, options: dv?.options,
         value, filled, hidden: hidden.rows.has(row),
+        help: dv?.prompt,
       });
     }
     fields.sort((a, b) => a.row - b.row || a.col - b.col);
@@ -356,5 +378,7 @@ export async function extractMepcSchema(xlsmBuf: ArrayBuffer): Promise<MepcSchem
     sheets.push({ name, index, path, fields, grid });
   });
 
+  // present the tabs in the requested order, not workbook order
+  sheets.sort((a, b) => SHEET_ORDER.indexOf(a.name) - SHEET_ORDER.indexOf(b.name));
   return { sheets };
 }
