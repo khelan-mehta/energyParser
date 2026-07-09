@@ -1,6 +1,7 @@
 import "./style.css";
 import { mountShell, registerRoute } from "./ui/shell";
 import { renderDashboard } from "./views/dashboard";
+import { renderWizard } from "./views/wizard";
 import { renderMarcus } from "./views/marcus";
 import { renderMepc } from "./views/mepc";
 import { renderWordReport } from "./views/wordreport";
@@ -12,6 +13,7 @@ import { renderAuth } from "./views/auth";
 import { Auth, getToken, setToken, setAuthUser } from "./api";
 
 registerRoute("dashboard", renderDashboard);
+registerRoute("wizard", renderWizard);
 registerRoute("marcus", renderMarcus);
 registerRoute("mepc", renderMepc);
 registerRoute("report", renderWordReport);

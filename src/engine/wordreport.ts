@@ -70,6 +70,7 @@ export interface ReportData {
   wmo: string;               // WMO station number parsed from the weather file (e.g. "722860")
   dataSource: string;        // Project Info "Source of Cost and Emissions Data"
   hasCode: boolean;          // a Code/Compliance baseline model is present
+  hasLeed: boolean;          // a LEED baseline model is present
   tool: "equest" | "trace" | "honeybee" | null;
 }
 
@@ -338,21 +339,28 @@ export function readWorkbook(buf: ArrayBuffer): ReportData {
   const source = readEndUse(rep, 21);   // V..AB
   const carbon = readEndUse(rep, 36);   // AK..AQ
   const cost = readEndUse(rep, 51);     // AZ..BF
-  // A Code/Compliance baseline exists only if some end-use carries a non-zero Code value.
-  const anyCode = (m: Record<string, EndUseRow>) => Object.values(m).some((r) => { const v = num(r.code); return v != null && v !== 0; });
-  let hasCode = anyCode(energy) || anyCode(carbon) || anyCode(cost);
+  // A LEED / Code baseline exists only if some end-use carries a non-zero value
+  // in that column (a project may have just one baseline — e.g. Code/Title 24).
+  const anyIn = (m: Record<string, EndUseRow>, key: keyof EndUseRow) => Object.values(m).some((r) => { const v = num(r[key]); return v != null && v !== 0; });
+  let hasCode = anyIn(energy, "code") || anyIn(carbon, "code") || anyIn(cost, "code");
+  let hasLeed = anyIn(energy, "leed") || anyIn(carbon, "leed") || anyIn(cost, "leed");
 
   // The "Report" sheet is formula-driven and silently returns 0 when the
-  // workbook's Proposed selector doesn't match the proposed model's name
-  // (or carbon/cost factors are missing). Detect that — Proposed all zero or
-  // Carbon all zero — and recompute the tables from the raw BL/Proposed sheets.
+  // workbook's Proposed selector doesn't match the proposed model's name (or
+  // carbon factors are missing). Detect THAT — proposed all zero, or carbon zero
+  // for BOTH baselines — and recompute from the raw sheets. A legitimately-absent
+  // LEED column (Code-only project) must NOT trigger this, or the code data gets
+  // mislabeled as LEED.
   const allZero = (m: Record<string, EndUseRow>, key: keyof EndUseRow) => Object.values(m).every((r) => !num(r[key]));
   let energyM = energy, carbonM = carbon, costM = cost, euiV = eui, ceiV = cei, eciV = eci;
-  if (allZero(energy, "proposed") || allZero(carbon, "leed") || allZero(cost, "proposed")) {
+  if (allZero(energy, "proposed") || (allZero(carbon, "leed") && allZero(carbon, "code")) || allZero(cost, "proposed")) {
     const raw = computeRawReportData(wb, proj, climateFile);
     if (raw) {
       energyM = raw.energy; carbonM = raw.carbon; costM = raw.cost;
-      euiV = raw.eui; ceiV = raw.cei; eciV = raw.eci; hasCode = raw.hasCode;
+      euiV = raw.eui; ceiV = raw.cei; eciV = raw.eci;
+      // the raw recompute lumps all baseline rows into the LEED column
+      hasCode = anyIn(energyM, "code") || anyIn(carbonM, "code") || anyIn(costM, "code");
+      hasLeed = anyIn(energyM, "leed") || anyIn(carbonM, "leed") || anyIn(costM, "leed");
       // also recover the Proposed simulation-parameter values from raw data
       fillRawParams(params, gridOf(wb.Sheets["BL Data"]), gridOf(wb.Sheets["Proposed Data"]));
     }
@@ -367,7 +375,7 @@ export function readWorkbook(buf: ArrayBuffer): ReportData {
     params,
     totalFloorArea: find(inp, 1, "total floor area", 5),
     climateZone, climateFile, location: resolveLocation(climateFile), projectName,
-    projectLocation, dataSource, wmo, climateFileClean, hasCode,
+    projectLocation, dataSource, wmo, climateFileClean, hasCode, hasLeed,
   };
 }
 
@@ -442,6 +450,14 @@ function fillTableByRows(
   return xml.slice(0, tblStart) + newTbl + xml.slice(tblEnd);
 }
 
+/* End-use rows that may be dropped when entirely zero (normalized labels). Total/
+   intensity/regulated and non-end-use rows are never in this set, so they stay. */
+const DROP_ENDUSE = new Set([
+  "heating", "cooling", "lighting", "exterior lighting", "equipment", "exterior equipment",
+  "fans", "pumps", "heat rejection", "humidification", "heat recovery", "water systems",
+  "refrigeration", "generators", "renewable energy", "shw", "pv", "wind", "uncertainty",
+]);
+
 /* map document end-use label → workbook key (handles aliases/typos) */
 function endUseLookup(map: Record<string, EndUseRow>, label: string): EndUseRow | null {
   const n = norm(label);
@@ -498,7 +514,16 @@ function fillEndUseSection(xml: string, heading: string, data: Record<string, En
         });
       }
     } else if (colMap && cells.length === width) {
-      const r = endUseLookup(data, tcText(cells[0][0]));
+      const label = tcText(cells[0][0]);
+      const r = endUseLookup(data, label);
+      // Drop entirely-zero rows: any end-use row (incl. Renewable Energy and
+      // blank/"-" placeholders) whose values are all zero or absent. Totals,
+      // intensities, Regulated Loads and non-end-use rows are always kept.
+      const n = norm(label);
+      const isTotal = /total|intensity|regulated/i.test(label);
+      const droppable = n === "" || DROP_ENDUSE.has(n);
+      const zero = !r || (!num(r.leed) && !num(r.code) && !num(r.proposed));
+      if (!isTotal && droppable && zero) continue; // skip this row entirely
       if (r) {
         let ci = 0;
         row = row.replace(/<w:tc>[\s\S]*?<\/w:tc>/g, (c) => {
@@ -809,7 +834,7 @@ function inlineImageXml(rId: string, docPrId: number, name: string, buf: ArrayBu
 
 /** A "Figure N: title" caption paragraph (Caption style). */
 function captionXml(n: number, title: string): string {
-  return `<w:p><w:pPr><w:pStyle w:val="Caption"/><w:jc w:val="center"/></w:pPr>` +
+  return `<w:p><w:pPr><w:pStyle w:val="Caption"/><w:jc w:val="left"/></w:pPr>` +
     `<w:r><w:t xml:space="preserve">Figure ${n}: ${escXml(title)}</w:t></w:r></w:p>`;
 }
 
@@ -881,22 +906,23 @@ function removeZoningPage(xml: string): string {
   return out;
 }
 
-/** Drop the "Code Baseline" (col 3) and "Code" (col 6) cells from every row of
- *  any table whose header row contains a "Code Baseline" cell. */
-export function dropCodeColumns(xml: string): string {
+/** Drop one baseline's columns — the "<which> Baseline" value column and its
+ *  matching "<which>" percent column — from every row of any table whose header
+ *  carries that label. `which` = "leed" or "code". */
+export function dropBaselineColumns(xml: string, which: "leed" | "code"): string {
+  const baseLabel = `${which} baseline`;
   const cellTexts = (row: string) => [...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((c) =>
     [...c[0].matchAll(new RegExp(WT + "([\\s\\S]*?)</w:t>", "g"))].map((x) => x[1]).join("").trim().toLowerCase());
   return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (tbl) => {
     const rows = [...tbl.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
-    // header = first row that actually carries a "Code Baseline" column label.
     const headerCells = rows.map((r) => cellTexts(r[0]));
-    const hIdx = headerCells.findIndex((c) => c.includes("code baseline"));
+    const hIdx = headerCells.findIndex((c) => c.includes(baseLabel));
     if (hIdx < 0) return tbl;
     const h = headerCells[hIdx];
     const width = h.length;
-    const codeBL = h.indexOf("code baseline");
-    const codePct = h.findIndex((t, i) => i > codeBL && t === "code");
-    const drop = new Set([codeBL, codePct].filter((i) => i >= 0));
+    const baseCol = h.indexOf(baseLabel);
+    const pctCol = h.findIndex((t, i) => i > baseCol && t === which);
+    const drop = new Set([baseCol, pctCol].filter((i) => i >= 0));
     return tbl.replace(/<w:tr\b[\s\S]*?<\/w:tr>/g, (row) => {
       // only touch rows with the same column count (skip merged title/spacer rows)
       if ([...row.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].length !== width) return row;
@@ -905,19 +931,101 @@ export function dropCodeColumns(xml: string): string {
     });
   });
 }
+/** Drop the "Code Baseline" + "Code" columns (no Code/Compliance baseline). */
+export function dropCodeColumns(xml: string): string { return dropBaselineColumns(xml, "code"); }
+
+/** Remove a whole section — from the given heading paragraph to the end of the
+    body — while preserving the trailing body <w:sectPr> (page setup). Used to
+    delete the unused "Design Alternatives" section at the end of the template. */
+function removeSectionToEnd(xml: string, style: string, text: string): string {
+  const pos = headingPos(xml, style, text);
+  if (pos < 0) return xml;
+  const start = Math.max(xml.lastIndexOf("<w:p ", pos), xml.lastIndexOf("<w:p>", pos));
+  if (start < 0) return xml;
+  const sect = xml.lastIndexOf("<w:sectPr");        // keep the final body sectPr
+  const end = sect > start ? sect : xml.indexOf("</w:body>");
+  if (end < 0 || end <= start) return xml;
+  return xml.slice(0, start) + xml.slice(end);
+}
+
+/** Remove blank paragraphs at the TOP of a page — those immediately after an
+    explicit page break, or immediately before a pageBreakBefore paragraph — so a
+    page's content starts at the top margin. Inter-content "breathing" blanks
+    (not at a page boundary) are preserved. */
+function trimTopOfPageBlanks(xml: string): string {
+  const blocks = [...xml.matchAll(/<w:p\b[^>]*\/>|<w:p\b[^>]*>[\s\S]*?<\/w:p>/g)];
+  const isBlank = (p: string) =>
+    !new RegExp(WT + "[\\s\\S]*?</w:t>").test(p) &&
+    !/<w:drawing|<w:br\b|<w:sectPr|<w:bookmarkStart|<w:fldChar|<w:instrText|<w:pict|<w:object|<w:tab\b/.test(p);
+  const remove = new Set<number>();
+  for (let i = 0; i < blocks.length; i++) {
+    if (/<w:br w:type="page"\/>/.test(blocks[i][0])) { let j = i + 1; while (j < blocks.length && isBlank(blocks[j][0])) { remove.add(j); j++; } }
+    if (/<w:pageBreakBefore\/>/.test(blocks[i][0])) { let j = i - 1; while (j >= 0 && isBlank(blocks[j][0])) { remove.add(j); j--; } }
+  }
+  if (!remove.size) return xml;
+  let out = "", last = 0;
+  blocks.forEach((b, idx) => { if (remove.has(idx)) { out += xml.slice(last, b.index!); last = b.index! + b[0].length; } });
+  out += xml.slice(last);
+  return out;
+}
 
 /* ============================================================
  *  4. MAIN
  * ============================================================ */
+/** Wizard-collected fields (subset of the app's ProjectInfo) that supplement the
+ *  workbook when filling the report's narrative placeholders. Each maps to a
+ *  Parser Test.docx QA comment ID. All optional — a missing value is left as-is. */
+export interface ReportFields {
+  projectName?: string;        // #8
+  clientName?: string;         // #5  footer
+  floorArea?: number;          // #10
+  projectLocation?: string;    // #11/#30
+  climateZone?: string;        // #31
+  leedCertType?: string;       // #9  e.g. "New Construction"
+  ashraeVersion?: string;      // #24/#25
+  referenceDocument?: string;  // #23
+  documentPhase?: string;      // #23
+  adjacentShading?: boolean;   // #26
+  costDataSource?: string;     // #36
+  costDataSourceNote?: string; // #36
+  reportDate?: string;         // #2
+}
+
 export interface WordReportOptions {
   projectRendering?: { buf: ArrayBuffer; ext: string } | null; // cover image
   modelSnip?: { buf: ArrayBuffer; ext: string } | null;        // Figure 1 model image
   exportDate?: Date;       // report date (defaults to today)
   fallbackTitle?: string;  // used for [Project Title] when the workbook has no project name
+  projectInfo?: ReportFields; // wizard-collected narrative fields (supplement the workbook)
+}
+
+/** Replace every occurrence of a literal bracket `token` (sitting inside a single
+ *  <w:t> run) with `val`. No-op when `val` is empty or the token is absent. */
+function replaceTokenGlobal(xml: string, token: string, val: string | undefined | null): string {
+  if (val == null || val === "") return xml;
+  return xml.split(token).join(escXml(val));
+}
+
+/** #45/#46 — when a simulation-parameter row is blank in the workbook, substitute
+ *  a stock value: efficiency rows → "N/A"; fan-power / exterior-equipment rows →
+ *  "Not included in energy model". Mutates the params map in place. */
+function applyEmptyParamDefaults(params: Record<string, string[]>): void {
+  const blank = (v: string | undefined) => v == null || v === "" || v === "-" || /^\$?\s*0(\.0+)?%?$/.test(String(v).replace(/,/g, ""));
+  const NA = /efficiency|\bcop\b|\beer\b|\bseer\b|iplv|kw\s*\/\s*ton/i;          // chiller…heat-pump efficiencies
+  const NIM = /fan power|exterior lighting|service (?:hot )?water|\bswh\b|elevator|process load|domestic hot water/i;
+  for (const [labelNorm, vals] of Object.entries(params)) {
+    if (vals.every(blank)) {
+      const def = NA.test(labelNorm) ? "N/A" : NIM.test(labelNorm) ? "Not included in energy model" : "";
+      if (def) for (let i = 0; i < vals.length; i++) vals[i] = def;
+    }
+  }
 }
 
 export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer, opts: WordReportOptions = {}): Promise<Blob> {
   const data = readWorkbook(xlsxBuf);
+  const pi = opts.projectInfo || {};
+  // report date: explicit Date wins, else a parseable ProjectInfo.reportDate, else today
+  const reportDate = opts.exportDate || (pi.reportDate && !isNaN(Date.parse(pi.reportDate)) ? new Date(pi.reportDate) : new Date());
 
   const docZip = await JSZip.loadAsync(docxBuf);
   const xlZip = await JSZip.loadAsync(xlsxBuf);
@@ -947,9 +1055,10 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
   /* ---- cover: remove README box, fill title block, insert rendering ---- */
   doc = removeReadme(doc);
   const fmtDate = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  doc = fillParagraphTokens(doc, "Project Title", { "[Project Title]": data.projectName || opts.fallbackTitle || "" });
+  const projName = data.projectName || pi.projectName || opts.fallbackTitle || "";
+  doc = fillParagraphTokens(doc, "Project Title", { "[Project Title]": projName });
   doc = fillParagraphTokens(doc, "Analysis Title", { "[Analysis Title]": "Energy Analysis" });
-  doc = fillParagraphTokens(doc, "Month Day, Year", { "Month Day, Year": fmtDate(opts.exportDate || new Date()) });
+  doc = fillParagraphTokens(doc, "Month Day, Year", { "Month Day, Year": fmtDate(reportDate) });
   // Project rendering — replace the "[Insert Project Rendering]" placeholder with
   // the modeler's uploaded image; if none, just drop the placeholder paragraph.
   {
@@ -1011,15 +1120,47 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
   // Project Info "Project Location" field; the climate-file name is cleaned of
   // run-name / CEC-zone / WMO noise; a parsed WMO# is prepended when present.
   doc = fillParagraphTokens(doc, "The project is based", {
-    "[location]": data.projectLocation || data.location,
-    "[zone designation]": data.climateZone,
+    "[location]": pi.projectLocation || data.projectLocation || data.location,
+    "[zone designation]": data.climateZone || pi.climateZone || "",
     "[insert name of climate file]": data.climateFileClean || data.climateFile,
   }, data.wmo ? `WMO#=${data.wmo}. ` : "");
-  // Source of cost & emissions data (Project Info question)
-  if (data.dataSource) {
+  // Source of cost & emissions data (#36). Prefer the workbook's Project Info
+  // value; else the wizard-collected cost source (+ optional qualifier note).
+  const costSrc = data.dataSource || [pi.costDataSource, pi.costDataSourceNote].filter(Boolean).join(" — ");
+  if (costSrc) {
     doc = fillParagraphTokens(doc, "source of the cost and emissions data", {
-      "[Please note the source of the cost and emissions data]": data.dataSource,
+      "[Please note the source of the cost and emissions data]": costSrc,
     });
+  }
+
+  /* ---- wizard-collected narrative fields (#5/#8/#9/#10/#11/#23/#24/#25/#26) ----
+     These supplement the workbook for placeholders it doesn't carry; each no-ops
+     when its value is absent or its token isn't in the template. ---- */
+  doc = replaceTokenGlobal(doc, "[insert project name]", projName || undefined);
+  const areaNum = pi.floorArea != null ? pi.floorArea : num(data.totalFloorArea);
+  doc = replaceTokenGlobal(doc, "[insert project area]", areaNum != null ? comma(areaNum) : undefined);
+  doc = replaceTokenGlobal(doc, "[insert project location]", pi.projectLocation || data.projectLocation || data.location || undefined);
+  doc = replaceTokenGlobal(doc, "[insert ASHRAE version]", pi.ashraeVersion);
+  doc = replaceTokenGlobal(doc, "[new construction/refurbishment project]", pi.leedCertType);
+  doc = replaceTokenGlobal(doc, "[insert document phase. i.e. Schematic Design etc.]", pi.documentPhase || pi.referenceDocument);
+  doc = replaceTokenGlobal(doc, "[insert document phase]", pi.documentPhase || pi.referenceDocument);
+  // #26 Adjacent shading: TRUE → keep the sentence, drop the "[If applicable:]"
+  // label; FALSE → remove the whole sentence; undefined → leave as authored.
+  if (pi.adjacentShading === true) {
+    doc = replaceTokenGlobal(doc, "[If applicable:]", " ");
+  } else if (pi.adjacentShading === false) {
+    doc = removeParagraphsWhere(doc, (t) => /Adjacent shading structures were included/i.test(t));
+  }
+  // #5 footer — "Client Name" / "Project Name" literals → real values.
+  if (pi.clientName || projName) {
+    const fp = "word/footer1.xml";
+    const ff = docZip.file(fp);
+    if (ff) {
+      let footer = await ff.async("string");
+      if (pi.clientName) footer = footer.split("Client Name").join(escXml(pi.clientName));
+      if (projName) footer = footer.split("Project Name").join(escXml(projName));
+      docZip.file(fp, footer);
+    }
   }
   // Software paragraph — keep only the description for the detected tool, drop
   // the others, the "[If …]" labels and the "[Choose …]" instruction line.
@@ -1034,32 +1175,29 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
       return false;
     });
   }
-  // Simulation Parameters — envelope, loads, HVAC & exterior-lighting tables
+  // Simulation Parameters — envelope, loads, HVAC & exterior-lighting tables.
+  // #45/#46: substitute "N/A" / "Not included in energy model" for blank rows.
+  applyEmptyParamDefaults(data.params);
   doc = fillParamRegion(doc, data.params);
-  // Add the "Source Energy" end-use breakdown the template lacks (cloned from the
-  // Site "Energy Consumption" section) so all four metrics — Site / Source / Carbon
-  // / Cost — get a table. Clone BEFORE drop/fill so it's processed like the rest.
-  doc = cloneSectionAfter(doc, "Energy Consumption", "Source Energy");
-  // When there is no Code/Compliance model, drop the "Code Baseline" + "Code"
-  // columns from the breakdown tables BEFORE filling, so fills line up.
-  if (!data.hasCode) doc = dropCodeColumns(doc);
+  // Drop the unused baseline column so the headers read correctly:
+  //   • only a LEED baseline (no Code)  → drop the "Code Baseline"/"Code" columns
+  //   • only a Code/Title-24 baseline   → drop the "LEED Baseline"/"LEED" columns
+  //     so the single baseline reads "Code Baseline" (not the template's default).
+  if (data.hasCode && !data.hasLeed) doc = dropBaselineColumns(doc, "leed");
+  else if (!data.hasCode) doc = dropCodeColumns(doc);
   // End-use breakdowns (the page-9-onward detail) — filled by column position.
   doc = fillEndUseSection(doc, "Energy Consumption", data.energy, "energy");
-  doc = fillEndUseSection(doc, "Source Energy", data.source, "energy");
   doc = fillEndUseSection(doc, "Carbon Emissions", data.carbon, "carbon");
   doc = fillEndUseSection(doc, "Energy Cost", data.cost, "cost");
 
   /* ---- embed the native charts ----
-     Each of the four metric sheets (Site / Source / Carbon / Cost) carries TWO
-     workbook charts: the absolute total by end use and the per-ft² intensity. They
-     go on the page AFTER that metric's table (a page break before AND after, so the
-     table gets its own page and the two graphs share the next). Figure 1 is the
-     Energy Model on the Model page; chart captions continue the numbering. */
-  const chartSheets: { heading: string; metric: string; absUnit: string; intUnit: string; abs: string; int: string }[] = [
-    { heading: "Energy Consumption", metric: "Site Energy Use", absUnit: "kBtu", intUnit: "kBtu/ft²", abs: "xl/charts/chart1.xml", int: "xl/charts/chart2.xml" },
-    { heading: "Source Energy", metric: "Source Energy Use", absUnit: "kBtu", intUnit: "kBtu/ft²", abs: "xl/charts/chart3.xml", int: "xl/charts/chart4.xml" },
-    { heading: "Carbon Emissions", metric: "Carbon Emissions", absUnit: "kg CO2e", intUnit: "kg CO2e/ft²", abs: "xl/charts/chart5.xml", int: "xl/charts/chart6.xml" },
-    { heading: "Energy Cost", metric: "Energy Cost", absUnit: "$/yr", intUnit: "$/ft²", abs: "xl/charts/chart7.xml", int: "xl/charts/chart8.xml" },
+     Per request, keep ONE chart per metric: Site = EUI (intensity), Carbon =
+     absolute use, Cost = absolute cost (no Source charts, no intensity for carbon/
+     cost). Each is placed on the page AFTER its table. ---- */
+  const chartSheets: { heading: string; src: string; title: string }[] = [
+    { heading: "Energy Consumption", src: "xl/charts/chart2.xml", title: "Site Energy Use Intensity by End Use (kBtu/ft²)" },
+    { heading: "Carbon Emissions", src: "xl/charts/chart5.xml", title: "Carbon Emissions by End Use (kg CO2e)" },
+    { heading: "Energy Cost", src: "xl/charts/chart7.xml", title: "Energy Cost by End Use ($/yr)" },
   ];
   let chartIdx = 1, figNo = 1; // Figure 1 = Energy Model (kept on the Model page)
   const embedChart = async (src: string, title: string): Promise<string> => {
@@ -1075,13 +1213,14 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
     return inlineChartXml(rId, docPr++, title) + captionXml(++figNo, title);
   };
   for (const s of chartSheets) {
-    const a = await embedChart(s.abs, `${s.metric} by End Use (${s.absUnit})`);
-    const b = await embedChart(s.int, `${s.metric} Intensity by End Use (${s.intUnit})`);
-    if (a || b) doc = insertChartAfterTable(doc, s.heading, PAGE_BREAK + a + b + PAGE_BREAK);
+    const c = await embedChart(s.src, s.title);
+    if (c) doc = insertChartAfterTable(doc, s.heading, PAGE_BREAK + c + PAGE_BREAK);
   }
   if (ctOverrides.length) ct = ct.replace("</Types>", ctOverrides.join("") + "</Types>");
   if (newRels.length) rels = rels.replace("</Relationships>", newRels.join("") + "</Relationships>");
 
+  // Remove the unused "Design Alternatives" section (last page) entirely.
+  doc = removeSectionToEnd(doc, "Heading1", "Design Alternatives");
   // tidy up the template's excessive blank-paragraph gaps from the Detailed
   // Results heading onward (where the empty pages / top padding came from).
   // Anchored on the real Heading1 — never the TOC entry or the page-2 floating
@@ -1090,6 +1229,8 @@ export async function buildWordReport(xlsxBuf: ArrayBuffer, docxBuf: ArrayBuffer
   // Drop footer-only blank pages (e.g. where a chart block's trailing page break
   // meets the template's own break between metric sections).
   doc = removeBlankPages(doc);
+  // Remove dead vertical space at the top of pages (content starts at the margin).
+  doc = trimTopOfPageBlanks(doc);
 
   docZip.file("[Content_Types].xml", ct);
   docZip.file("word/_rels/document.xml.rels", rels);

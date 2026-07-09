@@ -29,7 +29,12 @@ const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: stri
   { key: "iesve", name: "IES-VE", icon: "🧪", sub: "under development", soon: true },
 ];
 
-export async function renderMarcus(root: HTMLElement) {
+/** When true, Marcus is hosted inside the guided wizard: it drops its own
+    page-head / "← Projects" back button (the wizard supplies that chrome) but
+    keeps every tool (parse, setup, logs, analysis, rates, AI search, export). */
+let EMBED = false;
+export async function renderMarcus(root: HTMLElement, opts: { embedded?: boolean } = {}) {
+  EMBED = !!opts.embedded;
   if (!store.currentProject) return renderPicker(root);
   renderWorkspace(root, store.currentProject);
 }
@@ -114,9 +119,9 @@ function openProjectObj(root: HTMLElement, project: Project) {
 function renderWorkspace(root: HTMLElement, p: Project) {
   const m = MODELS.find((x) => x.key === p.modelType)!;
   root.appendChild(h(`
-    <div class="page-head">
+    <div class="page-head"${EMBED ? ' style="display:none"' : ""}>
       <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-sm" id="mk-back">← Projects</button>
+        ${EMBED ? "" : `<button class="btn btn-sm" id="mk-back">← Projects</button>`}
         <div><h1 style="font-size:23px">${esc(p.name)}</h1><p>${esc(p.address || "no address")} · <span class="pt-badge pt-${p.modelType}">${esc(m.name)}</span></p></div>
       </div>
       <div class="actions">
@@ -141,7 +146,7 @@ function renderWorkspace(root: HTMLElement, p: Project) {
     ],
   ));
 
-  root.querySelector("#mk-back")!.addEventListener("click", () => { store.currentProject = null; rerender(root); });
+  root.querySelector("#mk-back")?.addEventListener("click", () => { store.currentProject = null; rerender(root); });
   root.querySelector("#mk-edit")!.addEventListener("click", () => editProjectModal(root, p));
   root.querySelector("#mk-resume")?.addEventListener("click", () => {
     if (!store.blRows.length && !store.propRows.length) { toast("Parse a model first"); return; }
@@ -805,4 +810,4 @@ function editProjectModal(root: HTMLElement, p: Project) {
   });
 }
 
-function rerender(root: HTMLElement) { root.innerHTML = ""; renderMarcus(root); }
+function rerender(root: HTMLElement) { root.innerHTML = ""; renderMarcus(root, { embedded: EMBED }); }

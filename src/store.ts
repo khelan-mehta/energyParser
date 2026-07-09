@@ -33,6 +33,22 @@ export interface ProjectInfo {
   author?: string;
   date?: string;
   uncertaintyFactor?: number;    // fraction (0.05 = 5%)
+
+  // ---- Word-report fields (Parser Test.docx comment IDs). Collected in the
+  //      guided wizard's "details" step and consumed by buildWordReport. All
+  //      optional; derived ones are pre-filled but remain user-editable. ----
+  clientName?: string;            // #5  footer "Client | Project"
+  pincode?: string;               // #11/#25/#30/#31 drives location/CZ/code/ASHRAE
+  projectLocation?: string;       // #11/#30 "City, State" (derived from pincode)
+  leedRegistrationDate?: string;  // #18 controls which LEED tables appear
+  ashraeVersion?: string;         // #24/#25 derived from LEED version + reg date / energy code
+  referenceDocument?: string;     // #23 reference document name
+  documentPhase?: string;         // #23 e.g. "Schematic Design"
+  adjacentShading?: boolean;      // #26 add overshadowing buildings/trees sentence
+  costDataSource?: string;        // #36 "Default software rates" | "Manually input by modeler" | "Client-provided" | "EIA reference"
+  costDataSourceNote?: string;    // #36 free-text qualifier for the chosen source
+  weatherFileType?: string;       // #32 e.g. "TMY3" (derived from parsed weather file)
+  reportDate?: string;            // #2  report download date (defaults to today)
 }
 
 export interface AppState {

@@ -53,6 +53,69 @@ function escXml(s: any) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/* ---------- chart-legend pruning ----------
+   The Site / Source / Carbon / Cost charts carry one series PER end use, so the
+   legend shows a colour for every end use even when a model has none of it. Map
+   each series label → its end-use energy fields; an end use with zero energy
+   across all cases gets its legend entry hidden (the bar is already zero). Labels
+   we don't populate at all (SHW / PV / Wind / Uncertainty / blanks) are treated
+   as zero too, so the legend shows ONLY the non-zero colours. */
+const ENDUSE_FIELDS: Record<string, string[]> = {
+  "heating": ["htg_elec_kbtu", "htg_gas_kbtu", "htg_add_fuel_kbtu", "htg_dist_htg_kbtu"],
+  "cooling": ["clg_elec_kbtu", "clg_dist_kbtu"],
+  "lighting": ["int_lighting_kbtu"],
+  "exterior lighting": ["ext_lighting_kbtu"],
+  "equipment": ["int_equip_kbtu", "int_equip_gas_kbtu", "int_equip_add_kbtu"],
+  "exterior equipment": ["ext_equip_kbtu"],
+  "fans": ["fans_kbtu"],
+  "pumps": ["pumps_kbtu"],
+  "heat rejection": ["heat_reject_kbtu"],
+  "humidification": ["humid_elec_kbtu"],
+  "heat recovery": ["heat_recov_kbtu"],
+  "water systems": ["water_sys_elec_kbtu", "water_sys_gas_kbtu", "water_sys_add_kbtu", "water_sys_dist_kbtu"],
+  "refrigeration": ["refrig_kbtu"],
+  "generators": ["gen_kbtu"],
+};
+// Labels that mark a chart as an "end-use" chart (so the case-name charts —
+// LEED/Code/Proposed — are never touched).
+const ENDUSE_LABELS = new Set([...Object.keys(ENDUSE_FIELDS), "shw", "uncertainty", "pv", "wind", ""]);
+const normLabel = (s: any) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** End-use labels (normalized) that carry non-zero energy across the given rows. */
+function presentEndUses(rows: Row[]): Set<string> {
+  const present = new Set<string>();
+  for (const [label, keys] of Object.entries(ENDUSE_FIELDS)) {
+    let sum = 0;
+    for (const r of rows) for (const k of keys) { const v = (r as any)[k]; if (typeof v === "number" && isFinite(v)) sum += v; }
+    if (Math.abs(sum) > 1e-6) present.add(label);
+  }
+  return present;
+}
+
+/** Hide legend entries for entirely-zero series in every end-use chart (Site /
+    Source / Carbon / Cost). Edits the chart parts in place — which also fixes the
+    same charts when the Word report copies them out of this workbook. */
+async function pruneChartLegends(zip: JSZip, present: Set<string>): Promise<void> {
+  for (const f of zip.file(/^xl\/charts\/chart\d+\.xml$/) as JSZip.JSZipObject[]) {
+    let xml = await f.async("string");
+    const sers = [...xml.matchAll(/<c:ser>[\s\S]*?<\/c:ser>/g)];
+    if (!sers.length) continue;
+    const labels = sers.map((s) => {
+      const tx = s[0].match(/<c:tx>[\s\S]*?<\/c:tx>/);
+      return tx ? normLabel([...tx[0].matchAll(/<c:v>([^<]*)<\/c:v>/g)].map((m) => m[1]).join("")) : "";
+    });
+    if (!ENDUSE_LABELS.has(labels[0])) continue;          // case-name charts → leave alone
+    const hidden = labels.map((l, i) => (present.has(l) ? -1 : i)).filter((i) => i >= 0);
+    if (!hidden.length || !/<c:legend>/.test(xml)) continue;
+    const entries = hidden.map((i) => `<c:legendEntry><c:idx val="${i}"/><c:delete val="1"/></c:legendEntry>`).join("");
+    // CT_Legend order: legendPos, legendEntry*, … — insert right after legendPos.
+    xml = /<c:legendPos[^>]*\/>/.test(xml)
+      ? xml.replace(/(<c:legendPos[^>]*\/>)/, `$1${entries}`)
+      : xml.replace(/<c:legend>/, `<c:legend>${entries}`);
+    zip.file(f.name, xml);
+  }
+}
+
 /** 0-based column index → spreadsheet letters (0→A, 25→Z, 26→AA, 131→EB). */
 function colLetter(n: number): string {
   let s = ""; n++;
@@ -344,6 +407,10 @@ export async function buildWorkbook(blRows: Row[], propRows: Row[], cfg: RateCon
     sx = resetSheetView(sx, f.name === piPath);
     zip.file(f.name, sx);
   }
+
+  // Hide legend entries for end uses with no energy, so each Site/Source/Carbon/
+  // Cost chart's legend shows only the colours that actually appear.
+  await pruneChartLegends(zip, presentEndUses(allRows));
 
   return zip.generateAsync({
     type: "blob",

@@ -7,13 +7,17 @@
 import { h, esc, toast } from "../ui/util";
 import { ICON } from "../ui/icons";
 import { infoBoxes } from "../ui/infoboxes";
-import { buildWordReport } from "../engine/wordreport";
+import { buildWordReport, ReportFields } from "../engine/wordreport";
 import templateUrl from "../assets/report_template.docx?url";
 
 let xlsxFile: File | null = null;
 let renderingFile: File | null = null;
 let modelSnipFile: File | null = null;
 let busy = false;
+// When launched from the wizard's step 5, the workbook generated in step 4 and
+// the stored report fields are supplied here so no re-upload is required.
+let providedXlsx: { buf: ArrayBuffer; name: string } | null = null;
+let providedFields: ReportFields | null = null;
 
 const readBuf = (f: File): Promise<ArrayBuffer> =>
   new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as ArrayBuffer); r.onerror = () => rej(r.error); r.readAsArrayBuffer(f); });
@@ -22,10 +26,12 @@ function downloadBlob(blob: Blob, name: string) {
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-export function renderWordReport(root: HTMLElement) {
+export function renderWordReport(root: HTMLElement, opts: { embedded?: boolean; excel?: { buf: ArrayBuffer; name: string } | null; projectInfo?: ReportFields } = {}) {
   xlsxFile = null; renderingFile = null; modelSnipFile = null; busy = false;
+  providedXlsx = opts.excel || null;
+  providedFields = opts.projectInfo || null;
 
-  root.appendChild(h(`
+  if (!opts.embedded) root.appendChild(h(`
     <div class="page-head">
       <div>
         <h1>Word Report <span class="pill pill-red" style="font-size:10px;vertical-align:middle">new</span></h1>
@@ -106,6 +112,7 @@ function uploadCard(root: HTMLElement): HTMLElement {
       <div class="dz-t">Drop the .xlsx here or click to browse</div>
       <div class="dz-h">the workbook you exported &amp; QA/QC-ed in Marcus</div>
     </label>
+    ${providedXlsx ? `<div class="source-note" style="margin-top:12px;border-left-color:var(--green,#16a34a)">Using <b>${esc(providedXlsx.name)}</b> generated in Step 4 — drop a file above to override.</div>` : ""}
     <div class="chips" id="wr-file" style="margin-top:14px"></div>
   </div>`);
   const dz = card.querySelector("#wr-dz") as HTMLElement;
@@ -164,13 +171,14 @@ function refresh(root: HTMLElement) {
   fileChip(root, "#wr-file", "workbook", xlsxFile, () => xlsxFile = null);
   fileChip(root, "#wr-render-file", "rendering", renderingFile, () => renderingFile = null);
   fileChip(root, "#wr-snip-file", "model snip", modelSnipFile, () => modelSnipFile = null);
+  const ready = !!xlsxFile || !!providedXlsx;
   const go = root.querySelector("#wr-go") as HTMLButtonElement | null;
-  if (go) go.disabled = !xlsxFile || busy;
-  root.querySelectorAll<HTMLElement>("#wr-feats > div").forEach((el) => { el.style.opacity = xlsxFile ? "1" : ".55"; el.style.transition = "opacity .2s"; });
+  if (go) go.disabled = !ready || busy;
+  root.querySelectorAll<HTMLElement>("#wr-feats > div").forEach((el) => { el.style.opacity = ready ? "1" : ".55"; el.style.transition = "opacity .2s"; });
 }
 
 async function generate(root: HTMLElement) {
-  if (!xlsxFile || busy) return;
+  if ((!xlsxFile && !providedXlsx) || busy) return;
   busy = true;
   const status = root.querySelector("#wr-status") as HTMLElement;
   const go = root.querySelector("#wr-go") as HTMLButtonElement;
@@ -178,8 +186,10 @@ async function generate(root: HTMLElement) {
   status.innerHTML = `<span class="spinner" style="width:13px;height:13px;vertical-align:middle"></span> Reading workbook & building report…`;
   try {
     const extOf = (f: File) => (f.name.match(/\.(png|jpe?g)$/i)?.[1] || "png").toLowerCase().replace("jpeg", "jpg");
+    // Use the uploaded workbook when present, else the one generated in step 4.
+    const srcName = xlsxFile ? xlsxFile.name : providedXlsx!.name;
     const [xlsxBuf, tplResp, renderBuf, snipBuf] = await Promise.all([
-      readBuf(xlsxFile), fetch(templateUrl),
+      xlsxFile ? readBuf(xlsxFile) : Promise.resolve(providedXlsx!.buf), fetch(templateUrl),
       renderingFile ? readBuf(renderingFile) : Promise.resolve(null),
       modelSnipFile ? readBuf(modelSnipFile) : Promise.resolve(null),
     ]);
@@ -189,12 +199,13 @@ async function generate(root: HTMLElement) {
       projectRendering: renderBuf && renderingFile ? { buf: renderBuf, ext: extOf(renderingFile) } : null,
       modelSnip: snipBuf && modelSnipFile ? { buf: snipBuf, ext: extOf(modelSnipFile) } : null,
       exportDate: new Date(),
-      fallbackTitle: xlsxFile.name.replace(/\.xlsx$/i, "").replace(/[_-]+/g, " "),
+      fallbackTitle: srcName.replace(/\.xlsx$/i, "").replace(/[_-]+/g, " "),
+      projectInfo: providedFields || undefined,
     });
     // Name the report "<projectName>_Energy Results Comparision Report.docx".
-    // The uploaded workbook is "<projectName>_Energy Results Comparision.xlsx", so
-    // strip that trailing tag (any spacing/spelling) to recover the project name.
-    const stem = xlsxFile.name.replace(/\.xlsx$/i, "").trim();
+    // The workbook is "<projectName>_Energy Results Comparision.xlsx", so strip
+    // that trailing tag (any spacing/spelling) to recover the project name.
+    const stem = srcName.replace(/\.xlsx$/i, "").trim();
     const projName = (stem.replace(/[_\s]*Energy[_\s]*Results[_\s]*Compar\w*.*$/i, "").trim() || stem)
       .replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
     downloadBlob(blob, `${projName}_Energy Results Comparision Report.docx`);

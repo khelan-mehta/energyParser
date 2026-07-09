@@ -511,8 +511,14 @@ function siteToRow(r: TraceReport, site: SiteConsumption, idx: number): Row {
   const modelCost = isBaseline ? r.energyCostBaseline : r.energyCostProposed;
   if (modelCost > 0) row.model_total_cost = modelCost;
 
-  // ---- Baseline fan power (Baseline PRM Fan Power) ----
-  if (isBaseline && r.baselineFanKw > 0) row.total_fan_kw = r.baselineFanKw;
+  // ---- Baseline fan power: prefer the ASHRAE 90.1 PRM "Allowed Fan Power";
+  //      a non-PRM baseline (e.g. Title 24) has none, so fall back to the modeled
+  //      supply/exhaust fan kW from the per-alternative table (same source the
+  //      proposed uses) — otherwise the code column's fan power comes through 0. ----
+  if (isBaseline) {
+    if (r.baselineFanKw > 0) row.total_fan_kw = r.baselineFanKw;
+    else { const fk = altLookupNum(r.fanKwByAlt, site.alternative || "", true); if (fk > 0) row.total_fan_kw = +fk.toFixed(2); }
+  }
 
   // ---- Infiltration rate — Σ design zone infiltration cfm (÷2 for the cooling+
   //      heating duplication) ÷ gross wall (facade) area → CFM/ft² facade. ----

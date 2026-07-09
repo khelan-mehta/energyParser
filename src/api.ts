@@ -1,8 +1,10 @@
 /* ============================================================
  *  Marcus API client + auth state (frontend).
  * ============================================================ */
+import { upload as blobUpload } from "@vercel/blob/client";
+
 export interface User { id: string; email: string; name: string; role: "user" | "admin"; status: "pending" | "approved" | "rejected"; createdAt: number; }
-export interface ProjectFile { id: string; name: string; stored: string; role: "baseline" | "proposed" | "model"; size: number; ext: string; }
+export interface ProjectFile { id: string; name: string; url?: string; stored?: string; role: "baseline" | "proposed" | "model"; size: number; ext: string; }
 export interface Project {
   id: string; ownerId: string; ownerName: string; name: string; address: string;
   modelType: "equest" | "trace" | "iesve";
@@ -53,11 +55,21 @@ export const Projects = {
   create: (name: string, address: string, modelType: string) => api("/projects", { method: "POST", body: JSON.stringify({ name, address, modelType }) }),
   update: (id: string, patch: Partial<Project>) => api(`/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   remove: (id: string) => api(`/projects/${id}`, { method: "DELETE" }),
-  upload: (id: string, files: File[], role: string) => {
-    const fd = new FormData();
-    fd.append("role", role);
-    files.forEach((f) => fd.append("files", f));
-    return api(`/projects/${id}/files`, { method: "POST", body: fd });
+  // Browser → Vercel Blob direct upload (bypasses the serverless 4.5MB body
+  // limit), then register the returned URLs + metadata with the project. The
+  // blob token route authorizes via the JWT passed in clientPayload.
+  upload: async (id: string, files: File[], role: string) => {
+    const ext = (n: string) => { const i = n.lastIndexOf("."); return i >= 0 ? n.slice(i).toLowerCase() : ""; };
+    const metas: { name: string; url: string; size: number; ext: string; role: string }[] = [];
+    for (const f of files) {
+      const res = await blobUpload(`projects/${id}/${f.name}`, f, {
+        access: "public",
+        handleUploadUrl: "/api/blob/upload",
+        clientPayload: getToken(),
+      });
+      metas.push({ name: f.name, url: res.url, size: f.size, ext: ext(f.name), role });
+    }
+    return api(`/projects/${id}/files`, { method: "POST", body: JSON.stringify({ role, files: metas }) });
   },
   fileBlob: async (id: string, fileId: string): Promise<ArrayBuffer> => {
     const r = await fetch(`/api/projects/${id}/files/${fileId}`, { headers: { Authorization: `Bearer ${getToken()}` } });

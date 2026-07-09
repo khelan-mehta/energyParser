@@ -19,10 +19,11 @@ export async function renderDashboard(root: HTMLElement) {
   root.appendChild(h(`
     <div class="page-head">
       <div><h1>Dashboard</h1><p>Select a project to open its utility &amp; energy tools${authUser?.role === "admin" ? " · admin sees all users" : ""}.</p></div>
-      <div class="actions"><button class="btn btn-primary" id="db-new">${ICON.plus()} New Project</button></div>
+      <div class="actions"><button class="btn" id="db-wizard">${ICON.bolt()} New (Guided)</button><button class="btn btn-primary" id="db-new">${ICON.plus()} New Project</button></div>
     </div>
   `));
   root.querySelector("#db-new")!.addEventListener("click", () => { store.currentProject = null; navigate("marcus"); });
+  root.querySelector("#db-wizard")!.addEventListener("click", () => { store.currentProject = null; navigate("wizard"); });
 
   let projects: Project[] = [];
   try { projects = (await Projects.list()).projects; }

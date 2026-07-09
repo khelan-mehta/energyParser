@@ -1,34 +1,58 @@
-/* Tiny JSON-file database — no native deps, cross-platform.
-   Stores users, projects, and saved utility-rate sets. */
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+/* ============================================================
+ *  MongoDB data layer (Atlas). Replaces the old JSON-file store.
+ *  A single cached client is reused across serverless invocations
+ *  (Vercel) and across requests (local/Render).
+ * ============================================================ */
+import { MongoClient } from "mongodb";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.join(__dirname, "data");
-export const UPLOAD_DIR = path.join(__dirname, "uploads");
-const DBFILE = path.join(DATA_DIR, "db.json");
+const URI = process.env.MONGODB_URI;
+const DB_NAME = process.env.MONGODB_DB || "cannonMarcus";
 
-for (const d of [DATA_DIR, UPLOAD_DIR]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+if (!URI) console.warn("⚠ MONGODB_URI is not set — the API cannot reach the database.");
 
-const EMPTY = { users: [], projects: [], rateSets: [], rateHistory: [] };
-export const db = load();
+// Reuse the connection promise across hot invocations (avoids exhausting Atlas
+// connection limits on serverless). Stored on globalThis so module re-eval reuses it.
+let cached = globalThis.__marcusMongo;
+if (!cached) cached = globalThis.__marcusMongo = { client: null, promise: null };
 
-function load() {
-  if (fs.existsSync(DBFILE)) {
-    try { return { ...EMPTY, ...JSON.parse(fs.readFileSync(DBFILE, "utf8")) }; }
-    catch { return structuredClone(EMPTY); }
+export async function getDb() {
+  if (cached.db) return cached.db;
+  if (!cached.promise) {
+    const client = new MongoClient(URI, { maxPoolSize: 10 });
+    cached.promise = client.connect().then((c) => {
+      cached.client = c;
+      cached.db = c.db(DB_NAME);
+      return cached.db;
+    });
   }
-  fs.writeFileSync(DBFILE, JSON.stringify(EMPTY, null, 2));
-  return structuredClone(EMPTY);
+  await cached.promise;
+  return cached.db;
 }
 
-let saveTimer = null;
-export function save() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => fs.writeFileSync(DBFILE, JSON.stringify(db, null, 2)), 50);
+/** Convenience collection accessors. */
+export const col = {
+  users: async () => (await getDb()).collection("users"),
+  projects: async () => (await getDb()).collection("projects"),
+  rateSets: async () => (await getDb()).collection("rateSets"),
+  rateHistory: async () => (await getDb()).collection("rateHistory"),
+};
+
+/** Ensure indexes once (idempotent). Safe to call on cold start. */
+let indexed = false;
+export async function ensureIndexes() {
+  if (indexed) return;
+  indexed = true;
+  try {
+    const db = await getDb();
+    await db.collection("users").createIndex({ email: 1 }, { unique: true });
+    await db.collection("users").createIndex({ id: 1 }, { unique: true });
+    await db.collection("projects").createIndex({ id: 1 }, { unique: true });
+    await db.collection("projects").createIndex({ ownerId: 1 });
+    await db.collection("rateSets").createIndex({ id: 1 }, { unique: true });
+    await db.collection("rateHistory").createIndex({ id: 1 }, { unique: true });
+    await db.collection("rateHistory").createIndex({ ownerId: 1 });
+  } catch (e) { console.warn("index setup:", e.message); }
 }
-export function saveNow() { fs.writeFileSync(DBFILE, JSON.stringify(db, null, 2)); }
 
 export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);

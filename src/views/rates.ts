@@ -54,8 +54,12 @@ function tagPill(src: string, url = ""): string { const t = sourceTag(src, url);
 function refUrl(src: string): string { const m = (src || "").match(/ref:\s*(https?:\/\/[^)\s]+)/i); return m ? m[1] : ""; }
 
 /* ============================================================ */
-export function renderRates(root: HTMLElement) {
-  root.appendChild(h(`<div class="page-head"><div><h1>Utility Rates</h1><p>Locate your project and Marcus sources the best electricity, gas, carbon &amp; water rates — with citations.</p></div><div class="actions"><button class="btn btn-sm" id="r-saveset">Save rate set</button></div></div>`));
+/** When embedded in the guided wizard, drop the page-head title (the wizard
+    supplies the step chrome) but keep the identical rates UI underneath. */
+let RATES_EMBED = false;
+export function renderRates(root: HTMLElement, opts: { embedded?: boolean } = {}) {
+  RATES_EMBED = !!opts.embedded;
+  if (!RATES_EMBED) root.appendChild(h(`<div class="page-head"><div><h1>Utility Rates</h1><p>Locate your project and Marcus sources the best electricity, gas, carbon &amp; water rates — with citations.</p></div><div class="actions"><button class="btn btn-sm" id="r-saveset">Save rate set</button></div></div>`));
   root.appendChild(infoBoxes(
     [
       "Type your <b>project address</b> and hit <b>Locate</b>.",
@@ -78,7 +82,7 @@ export function renderRates(root: HTMLElement) {
   root.appendChild(historyCard(root));
   root.appendChild(sourcesFooter());
 
-  root.querySelector("#r-saveset")!.addEventListener("click", () => saveCurrentAsNew(root));
+  root.querySelector("#r-saveset")?.addEventListener("click", () => saveCurrentAsNew(root));
 }
 
 /* ---------- saved rate sets (reusable across projects) ---------- */
@@ -670,4 +674,4 @@ function updateRow(root: HTMLElement, e: Entity) {
   emit();
 }
 function num(el: HTMLInputElement): number | null { const v = el.value.trim(); if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
-function rerender(root: HTMLElement) { root.innerHTML = ""; renderRates(root); }
+function rerender(root: HTMLElement) { root.innerHTML = ""; renderRates(root, { embedded: RATES_EMBED }); }

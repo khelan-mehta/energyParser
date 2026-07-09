@@ -7,6 +7,12 @@ export function signToken(user) {
   return jwt.sign({ id: user.id, role: user.role, email: user.email, name: user.name }, SECRET, { expiresIn: "30d" });
 }
 
+/** Verify a raw JWT string, returning its payload or throwing. Used by the Blob
+    upload route, which receives the token via clientPayload (not a header). */
+export function verifyToken(token) {
+  return jwt.verify(String(token || ""), SECRET);
+}
+
 export function authMiddleware(req, res, next) {
   const h = req.headers.authorization || "";
   const t = h.startsWith("Bearer ") ? h.slice(7) : "";

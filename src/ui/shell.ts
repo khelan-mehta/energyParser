@@ -6,7 +6,7 @@ import { authUser, logout } from "../api";
 import { h, esc } from "./util";
 import { ICON } from "./icons";
 
-export type Route = "dashboard" | "marcus" | "mepc" | "report" | "rates" | "leed" | "docs" | "admin";
+export type Route = "dashboard" | "wizard" | "marcus" | "mepc" | "report" | "rates" | "leed" | "docs" | "admin";
 
 type RenderFn = (root: HTMLElement) => void | Promise<void>;
 const routes: Partial<Record<Route, RenderFn>> = {};
@@ -26,6 +26,7 @@ const GROUPS: { key: string; label: string }[] = [
 
 const NAV: { route: Route; label: string; icon: (c?: string) => string; group: string; adminOnly?: boolean }[] = [
   { route: "dashboard", label: "Dashboard", icon: ICON.dashboard, group: "top" },
+  { route: "wizard", label: "Guided Project (new)", icon: ICON.bolt, group: "top" },
   { route: "rates", label: "Project Utility Data", icon: ICON.rates, group: "utility" },
   { route: "marcus", label: "Energy Results Comparison", icon: ICON.chart, group: "energy" },
   { route: "report", label: "Energy Results Report", icon: ICON.book, group: "energy" },
