@@ -15,6 +15,12 @@ export interface ProjectInfo {
   projectName?: string;
   climateZone?: string;
   programType?: string;
+  // Green-building certification (replaces the single "program type"): the
+  // rating system, its version, and the certification type.
+  ratingSystem?: string;         // e.g. "LEED" | "GRIHA" | "Manual input"
+  ratingVersion?: string;        // e.g. "v4.1"
+  ratingType?: string;           // e.g. "New Construction"
+  weatherFile?: string;          // chosen EPW/TMY station ("City, ST — 12 mi")
   floorArea?: number;            // ft²
   benchmarkEui?: number;         // AIA 2030 BmEUI (kBtu/ft²)
   targetSavings?: number;        // AIA 2030 target savings, fraction (0.9 = 90%)

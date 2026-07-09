@@ -3,7 +3,7 @@
  *  static file serving (the built Vite frontend) and app.listen.
  *  On Vercel the app is served by api/index.js instead (no listen).
  * ============================================================ */
-import "dotenv/config";
+import "./env.js";
 import express from "express";
 import fs from "fs";
 import path from "path";

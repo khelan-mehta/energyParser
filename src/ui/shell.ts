@@ -6,7 +6,7 @@ import { authUser, logout } from "../api";
 import { h, esc } from "./util";
 import { ICON } from "./icons";
 
-export type Route = "dashboard" | "wizard" | "marcus" | "mepc" | "report" | "rates" | "leed" | "docs" | "admin";
+export type Route = "dashboard" | "portfolio" | "wizard" | "marcus" | "mepc" | "report" | "rates" | "leed" | "docs" | "admin";
 
 type RenderFn = (root: HTMLElement) => void | Promise<void>;
 const routes: Partial<Record<Route, RenderFn>> = {};
@@ -21,19 +21,17 @@ const GROUPS: { key: string; label: string }[] = [
   { key: "top", label: "" },
   { key: "utility", label: "Project Utility Data" },
   { key: "energy", label: "Project Energy Data" },
-  { key: "general", label: "More" },
 ];
 
 const NAV: { route: Route; label: string; icon: (c?: string) => string; group: string; adminOnly?: boolean }[] = [
-  { route: "dashboard", label: "Dashboard", icon: ICON.dashboard, group: "top" },
+  { route: "dashboard", label: "Project Setup", icon: ICON.dashboard, group: "top" },
+  { route: "portfolio", label: "Portfolio Overview", icon: ICON.chart, group: "top" },
   { route: "wizard", label: "Guided Project (new)", icon: ICON.bolt, group: "top" },
   { route: "rates", label: "Project Utility Data", icon: ICON.rates, group: "utility" },
   { route: "marcus", label: "Energy Results Comparison", icon: ICON.chart, group: "energy" },
   { route: "report", label: "Energy Results Report", icon: ICON.book, group: "energy" },
   { route: "mepc", label: "MEPC Calculator", icon: ICON.table, group: "energy" },
-  { route: "leed", label: "LEED Guidance", icon: ICON.leed, group: "general" },
-  { route: "docs", label: "Documentation", icon: ICON.book, group: "general" },
-  { route: "admin", label: "Admin", icon: ICON.settings, group: "general", adminOnly: true },
+  { route: "admin", label: "Admin", icon: ICON.settings, group: "energy", adminOnly: true },
 ];
 
 export function navigate(route: Route) {
@@ -63,7 +61,17 @@ export function mountShell(app: HTMLElement) {
 
   // ----- sidebar -----
   const sidebar = h(`<aside class="sidebar"></aside>`);
-  sidebar.appendChild(h(`<div class="brand"><div class="brand-name">Marc<b>us</b></div></div>`));
+  // Brand collapses to "EMP"; click toggles the full name.
+  const brand = h(`<div class="brand"><button class="brand-name" id="brand-toggle" title="Click to expand" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;letter-spacing:inherit;text-align:left">EMP</button></div>`);
+  const brandBtn = brand.querySelector("#brand-toggle") as HTMLButtonElement;
+  brandBtn.addEventListener("click", () => {
+    const full = brandBtn.dataset.full === "1";
+    brandBtn.dataset.full = full ? "0" : "1";
+    brandBtn.textContent = full ? "EMP" : "ENERGY MODELING PARSER";
+    brandBtn.title = full ? "Click to expand" : "Click to collapse";
+    brandBtn.style.fontSize = full ? "" : "13px";
+  });
+  sidebar.appendChild(brand);
   navContainer = h(`<nav style="flex:1"></nav>`);
   for (const group of GROUPS) {
     const items = NAV.filter((x) => x.group === group.key && (!x.adminOnly || isAdmin));

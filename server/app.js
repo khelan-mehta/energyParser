@@ -5,7 +5,7 @@
  *    • Data  → MongoDB Atlas (users / projects / rateSets / rateHistory)
  *    • Files → Vercel Blob (browser direct-upload; metadata in project.files)
  * ============================================================ */
-import "dotenv/config";
+import "./env.js";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";

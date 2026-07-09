@@ -14,6 +14,7 @@ import {
   GatherOpts, RateCandidate, EIA_COMM_CENTS_PER_KWH, EIA_GAS_DOLLARS_PER_THERM, WATER_DOLLARS_PER_KGAL,
 } from "../engine/sources";
 import { Rates, RateHistory, RateSnapshot, RateSet, authUser } from "../api";
+import { utilityProfileCard } from "../ui/utilityProfile";
 
 type Entity = "electricity" | "gas" | "carbon" | "water";
 const ENTITIES: Entity[] = ["electricity", "gas", "carbon", "water"];
@@ -59,11 +60,11 @@ function refUrl(src: string): string { const m = (src || "").match(/ref:\s*(http
 let RATES_EMBED = false;
 export function renderRates(root: HTMLElement, opts: { embedded?: boolean } = {}) {
   RATES_EMBED = !!opts.embedded;
-  if (!RATES_EMBED) root.appendChild(h(`<div class="page-head"><div><h1>Utility Rates</h1><p>Locate your project and Marcus sources the best electricity, gas, carbon &amp; water rates — with citations.</p></div><div class="actions"><button class="btn btn-sm" id="r-saveset">Save rate set</button></div></div>`));
+  if (!RATES_EMBED) root.appendChild(h(`<div class="page-head"><div><h1>Utility Rates</h1><p>Locate your project and EMP sources the best electricity, gas, carbon &amp; water rates — with citations.</p></div><div class="actions"><button class="btn btn-sm" id="r-saveset">Save rate set</button></div></div>`));
   root.appendChild(infoBoxes(
     [
       "Type your <b>project address</b> and hit <b>Locate</b>.",
-      "Marcus auto-sources every rate and fills the table below.",
+      "EMP auto-sources every rate and fills the table below.",
       "Expand <b>Source</b> to pick another value, <b>use another source</b>, copy the chosen citation, or hit ✎ to type your own.",
       "Choose your <b>units</b>; the rates flow into every project's Excel.",
     ],
@@ -76,10 +77,10 @@ export function renderRates(root: HTMLElement, opts: { embedded?: boolean } = {}
   ));
   root.appendChild(addressCard(root));
   root.appendChild(finalTable(root));
+  root.appendChild(utilityProfileCard());
   root.appendChild(waterCard(root));
   root.appendChild(districtCard());
   root.appendChild(savedSetsCard(root));
-  root.appendChild(historyCard(root));
   root.appendChild(sourcesFooter());
 
   root.querySelector("#r-saveset")?.addEventListener("click", () => saveCurrentAsNew(root));
@@ -220,7 +221,7 @@ async function locate(root: HTMLElement, card: HTMLElement) {
 
 /* ---------- final table ---------- */
 function finalTable(root: HTMLElement): HTMLElement {
-  const card = h(`<div class="card"><div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.table("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div><h3>Final Rates &amp; Sources</h3><span class="sub">comparison vs other states · pick units · expand to choose or copy a source</span></div></div>`);
+  const card = h(`<div class="card"><div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.table("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div><h3>Final Rates &amp; Sources</h3></div></div>`);
   const scroll = h(`<div style="overflow-x:auto"></div>`);
   const table = h(`<table class="final-table"><thead><tr><th>Utility Rate</th><th>Rate</th><th>Unit</th><th>Vs. other states</th><th>Source</th></tr></thead><tbody></tbody></table>`);
   const tb = table.querySelector("tbody")!;
@@ -239,21 +240,18 @@ function finalRow(root: HTMLElement, e: Entity): HTMLElement {
       <td style="min-width:240px">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm btn-dark ftfind" title="Find from all sources">${ICON.refresh()} Find</button>
-          <span class="src-toggle" id="ftsrctog-${e}"><span class="chev">▶</span> <span id="fttag-${e}">${tagPill(srcOf(e), refUrl(srcOf(e)))}</span> ${gathered[e].length ? gathered[e].length + " sources" : "source"}</span>
+          <span id="fttag-${e}">${tagPill(srcOf(e), refUrl(srcOf(e)))}</span>
+          <button class="btn btn-sm ftsources" title="View available sources">${ICON.book("x")} Sources</button>
           <button class="btn btn-sm ftcopy" title="Copy selected source">${ICON.copy("x")}</button>
         </div>
-        <div class="src-list" id="ftsrc-${e}"></div>
       </td>
     </tr>`);
   tr.querySelector(`#ftunit-${e}`)!.addEventListener("change", (ev) => { unitState[e] = parseInt((ev.target as HTMLSelectElement).value, 10); updateRow(root, e); });
-  const tog = tr.querySelector(`#ftsrctog-${e}`)!; const list = tr.querySelector(`#ftsrc-${e}`)! as HTMLElement;
-  tog.addEventListener("click", () => { tog.classList.toggle("open"); list.classList.toggle("open"); });
   tr.querySelector(".ftfind")!.addEventListener("click", () => runFind(root, e));
+  tr.querySelector(".ftsources")!.addEventListener("click", () => openSourcesModal(root, e));
   tr.querySelector(".ftcopy")!.addEventListener("click", () => copySources(e));
   tr.querySelector(".ftgraph")!.addEventListener("click", () => openCompareModal(e));
   tr.querySelector(".ftedit")!.addEventListener("click", () => manualEdit(root, tr, e));
-  // initial source list
-  buildSrcList(root, e, list);
   return tr;
 }
 function manualEdit(root: HTMLElement, tr: HTMLElement, e: Entity) {
@@ -262,19 +260,28 @@ function manualEdit(root: HTMLElement, tr: HTMLElement, e: Entity) {
   const cur = baseVal(e);
   cell.innerHTML = `<input type="number" step="any" class="ftedit-in" value="${cur == null ? "" : +(cur * factor).toFixed(6)}" style="width:110px;padding:6px 8px;border:1px solid var(--red);border-radius:8px" /> <span style="font-size:11px;color:var(--g400)">${esc(unitLabel)}</span>`;
   const inp = cell.querySelector(".ftedit-in") as HTMLInputElement; inp.focus(); inp.select();
-  const commit = () => { const v = parseFloat(inp.value); if (!isNaN(v)) { setBase(e, v / factor); markManual(e); toast(`✓ ${META[e].name} set manually`); } emit(); rerender(root); };
+  // A manual value must carry a source — ask for it in a popup before accepting.
+  const commit = () => { const v = parseFloat(inp.value); if (isNaN(v)) { rerender(root); return; } openManualSourceModal(root, e, v / factor); };
   inp.addEventListener("blur", commit);
   inp.addEventListener("keydown", (ev) => { if ((ev as KeyboardEvent).key === "Enter") inp.blur(); if ((ev as KeyboardEvent).key === "Escape") rerender(root); });
 }
 function buildSrcList(root: HTMLElement, e: Entity, list: HTMLElement) {
   list.innerHTML = "";
   const chosen = srcOf(e);
-  if (chosen) list.appendChild(h(`<div style="color:var(--black);font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:4px">✓ ${tagPill(chosen, refUrl(chosen))} <span>${esc(chosen)}</span></div>`));
+  const curVal = baseVal(e);
+  // Currently-selected source, highlighted, with the FULL citation (never clipped).
+  if (chosen) list.appendChild(h(`<div style="background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:8px 10px;margin-bottom:10px;color:var(--black);font-weight:600;display:flex;align-items:flex-start;gap:8px"><span>✓</span> ${tagPill(chosen, refUrl(chosen))} <span style="flex:1;min-width:0;word-break:break-word;line-height:1.5">${esc(chosen)}</span></div>`));
   if (!gathered[e].length && !chosen) { list.appendChild(h(`<div style="color:var(--g400)">No source yet — hit Find.</div>`)); return; }
   gathered[e].forEach((c) => {
-    const isCur = baseVal(e) === c.value;
-    const item = h(`<div class="src-item" style="display:flex;align-items:center;gap:8px;padding:4px 0 4px 14px"><span style="min-width:80px;font-variant-numeric:tabular-nums;color:${isCur ? "var(--red)" : "var(--g700)"}">${c.value} ${esc(c.unit)}</span> ${tagPill(c.source, c.url)} <span style="flex:1;min-width:0;font-size:11px;color:var(--g500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.label)} · <a href="${esc(c.url)}" target="_blank" rel="noopener">ref ↗</a></span> <button class="btn btn-sm use-one">Use</button></div>`);
-    item.querySelector(".use-one")!.addEventListener("click", () => { applyCandidate(c); toast(`✓ Applied ${c.value} ${c.unit}`); updateRow(root, e); });
+    const isCur = curVal === c.value;
+    // Full source label — wraps instead of truncating mid-text; the in-use one is highlighted.
+    const item = h(`<div class="src-item" style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:4px;${isCur ? "background:var(--red-soft);border:1px solid var(--red)" : "border:1px solid var(--g150)"}">
+      <span style="min-width:92px;font-variant-numeric:tabular-nums;font-weight:${isCur ? "700" : "400"};color:${isCur ? "var(--red)" : "var(--g700)"}">${c.value} ${esc(c.unit)}</span>
+      ${tagPill(c.source, c.url)}
+      <span style="flex:1;min-width:0;font-size:11.5px;color:var(--g600);word-break:break-word;line-height:1.5">${esc(c.label)}${c.url ? ` · <a href="${esc(c.url)}" target="_blank" rel="noopener">ref ↗</a>` : ""}</span>
+      ${isCur ? `<span style="font-size:9px;font-weight:700;color:var(--red);white-space:nowrap;letter-spacing:.4px">✓ IN USE</span>` : `<button class="btn btn-sm use-one">Use</button>`}
+    </div>`);
+    item.querySelector(".use-one")?.addEventListener("click", () => { applyCandidate(c); toast(`✓ Applied ${c.value} ${c.unit}`); updateRow(root, e); buildSrcList(root, e, list); });
     list.appendChild(item);
   });
   // "Use another source" — let the user supply their own value + citation.
@@ -314,6 +321,7 @@ function otherSourceRow(root: HTMLElement, e: Entity): HTMLElement {
       setSource(e, url ? `${srcText} (ref: ${url})` : srcText);
       toast(`✓ ${META[e].name} set from custom source`);
       emit(); updateRow(root, e);
+      buildSrcList(root, e, wrap.parentElement as HTMLElement); // refresh so the custom source is highlighted
     });
   });
   return wrap;
@@ -609,9 +617,58 @@ function gatherOpts(): GatherOpts {
 const RUNNERS: Record<Entity, (o: GatherOpts) => Promise<{ candidates: RateCandidate[]; errors: string[] }>> = { electricity: gatherElectricity, gas: gatherGas, carbon: gatherCarbon, water: gatherWater };
 async function runFind(root: HTMLElement, e: Entity) {
   if (!store.rates.state && store.rates.lat == null) { toast("Locate the project first"); return; }
-  const list = document.getElementById(`ftsrc-${e}`) as HTMLElement; list.classList.add("open"); list.innerHTML = `<div style="color:var(--g400)">Searching…</div>`;
-  try { const res = await RUNNERS[e](gatherOpts()); gathered[e] = res.candidates; const max = pickMax(res.candidates); if (max) applyCandidate(max); updateRow(root, e); if (max) toast(`✓ ${META[e].name}: ${max.value} ${max.unit}`); }
-  catch (err: any) { list.innerHTML = `<div style="color:var(--red)">${esc(err.message)}</div>`; }
+  // The source list now lives in a popup; refresh it there if it's open.
+  const list = document.getElementById(`ftsrc-modal-${e}`) as HTMLElement | null;
+  if (list) { list.classList.add("open"); list.innerHTML = `<div style="color:var(--g400)">Searching…</div>`; }
+  try {
+    const res = await RUNNERS[e](gatherOpts()); gathered[e] = res.candidates;
+    const max = pickMax(res.candidates); if (max) applyCandidate(max);
+    updateRow(root, e);
+    if (list) buildSrcList(root, e, list);
+    if (max) toast(`✓ ${META[e].name}: ${max.value} ${max.unit}`);
+  } catch (err: any) { if (list) list.innerHTML = `<div style="color:var(--red)">${esc(err.message)}</div>`; else toast("Find failed — " + err.message); }
+}
+
+/* Available-sources popup — clearly lists every sourced value + "use your own". */
+function openSourcesModal(root: HTMLElement, e: Entity) {
+  const overlay = h(`<div class="modal-overlay"><div class="modal" style="width:min(660px,94vw)"><div class="modal-hd"><h3>${esc(META[e].name)} — available sources</h3><span class="x">${ICON.close("x")}</span></div><div class="modal-body">
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap"><button class="btn btn-sm btn-dark" id="sm-find">${ICON.refresh()} Find from all sources</button><span style="font-size:12px;color:var(--g500)">pick a value to use, or add your own below</span></div>
+    <div class="src-list open" id="ftsrc-modal-${e}"></div>
+  </div></div></div>`);
+  document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+  const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); };
+  overlay.querySelector(".x")!.addEventListener("click", close);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
+  const list = overlay.querySelector(`#ftsrc-modal-${e}`) as HTMLElement;
+  buildSrcList(root, e, list);
+  overlay.querySelector("#sm-find")!.addEventListener("click", () => runFind(root, e));
+}
+
+/* Manual entry always asks for a source + link before the value is accepted. */
+function openManualSourceModal(root: HTMLElement, e: Entity, baseValue: number) {
+  const [ul, f] = UNITS[e].opts[unitState[e]];
+  const disp = `${(baseValue * f).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${ul}`;
+  const overlay = h(`<div class="modal-overlay"><div class="modal" style="width:min(460px,94vw)"><div class="modal-hd"><h3>Source for ${esc(META[e].name)}</h3><span class="x">${ICON.close("x")}</span></div><div class="modal-body">
+    <div style="font-size:12.5px;color:var(--g500);margin-bottom:12px">You entered <b>${esc(disp)}</b>. Add where this value came from.</div>
+    <div class="field" style="margin-bottom:10px"><label>Source name</label><input id="ms-src" placeholder="e.g. Local utility tariff 2026" /></div>
+    <div class="field" style="margin-bottom:16px"><label>Link to source</label><input id="ms-url" placeholder="https://…" /></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="ms-cancel">Cancel</button><button class="btn btn-primary" id="ms-apply">Apply</button></div>
+  </div></div></div>`);
+  document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+  let done = false;
+  const finish = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); };
+  const cancel = () => { if (done) return; finish(); rerender(root); };  // discard the typed value
+  overlay.querySelector(".x")!.addEventListener("click", cancel);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) cancel(); });
+  overlay.querySelector("#ms-cancel")!.addEventListener("click", cancel);
+  overlay.querySelector("#ms-apply")!.addEventListener("click", () => {
+    const src = (overlay.querySelector("#ms-src") as HTMLInputElement).value.trim() || "Manually entered";
+    const url = (overlay.querySelector("#ms-url") as HTMLInputElement).value.trim();
+    setBase(e, baseValue);
+    setSource(e, url ? `${src} (ref: ${url})` : src);
+    done = true; emit(); finish(); toast(`✓ ${META[e].name} set from your source`); rerender(root);
+  });
+  (overlay.querySelector("#ms-src") as HTMLInputElement).focus();
 }
 async function autoSourceAll(): Promise<number> {
   const o = gatherOpts();

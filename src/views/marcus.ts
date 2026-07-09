@@ -22,6 +22,7 @@ import { COLUMNS } from "../engine/columns";
 import { renderAnalysis } from "./analysis";
 import { navigate } from "../ui/shell";
 import { infoBoxes } from "../ui/infoboxes";
+import { utilityProfileCard } from "../ui/utilityProfile";
 
 const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: string; soon?: boolean }[] = [
   { key: "equest", name: "eQUEST", icon: "🏢", sub: ".SIM / .inp (DOE-2.2)" },
@@ -33,11 +34,19 @@ const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: stri
     page-head / "← Projects" back button (the wizard supplies that chrome) but
     keeps every tool (parse, setup, logs, analysis, rates, AI search, export). */
 let EMBED = false;
-export async function renderMarcus(root: HTMLElement, opts: { embedded?: boolean } = {}) {
+// In the wizard, the "Document & cost details" card is injected right after the
+// files/parse card. Provided by the host so Marcus stays self-contained.
+let EMBED_EXTRA: (() => HTMLElement) | null = null;
+export async function renderMarcus(root: HTMLElement, opts: { embedded?: boolean; extraCard?: () => HTMLElement } = {}) {
   EMBED = !!opts.embedded;
+  EMBED_EXTRA = opts.extraCard || null;
   if (!store.currentProject) return renderPicker(root);
   renderWorkspace(root, store.currentProject);
 }
+
+// Models parsed but not yet committed — drives the INLINE setup form (embed mode
+// replaces the setup popup with an inline card that must be completed to continue).
+let pendingSetup: { models: ParsedModel[]; modelRates: ModelRates | null } | null = null;
 
 /* ============================================================ PICKER */
 async function renderPicker(root: HTMLElement) {
@@ -135,7 +144,7 @@ function renderWorkspace(root: HTMLElement, p: Project) {
     [
       "Pick the <b>model type</b> below (eQUEST / TRACE / IES-VE) to match your files.",
       "Upload the baseline &amp; proposed <b>.SIM / .inp</b> (or the TRACE report PDF) and hit <b>Parse</b>.",
-      "Complete the one <b>Project Setup</b> popup — rates, model assignment &amp; Project Info (or <b>Save as draft</b>), then <b>Export Excel</b>.",
+      "Complete the <b>Project Setup</b> form — rates, model assignment &amp; Project Info (or <b>Save as draft</b>), then <b>Export Excel</b>.",
       "Use <b>AI Search</b> to pull any value out of the parsed model.",
     ],
     [
@@ -171,26 +180,39 @@ function renderWorkspace(root: HTMLElement, p: Project) {
   });
   root.appendChild(modelCard);
 
-  // files
+  // files + parse
   root.appendChild(fileSection(root, p));
 
-  // logs
-  root.appendChild(logsAccordion());
+  if (EMBED) {
+    // Section-3 layout: inline setup (no popup) → doc/cost details → rates recap
+    // → graphs → analysis (collapsed) → AI (collapsed) → logs (collapsed).
+    if (pendingSetup) root.appendChild(inlineSetupCard(root, p));
+    if (EMBED_EXTRA) root.appendChild(EMBED_EXTRA());
+    root.appendChild(ratesAccordion(root, p));
+    root.appendChild(analysisAccordion(root));
+    root.appendChild(aiAccordion());
+    root.appendChild(logsAccordion());
+  } else {
+    root.appendChild(logsAccordion());
+    root.appendChild(analysisAccordion(root));
+    root.appendChild(ratesAccordion(root, p));
+    root.appendChild(aiAccordion());
+  }
+}
 
-  // project analysis (expandable, after logs)
-  root.appendChild(analysisAccordion(root));
-
-  // utility rates used
-  root.appendChild(ratesAccordion(root, p));
-
-  // AI search
-  root.appendChild(aiAccordion());
+/* Utility rates are considered set once electricity, gas & carbon all have values.
+   In the wizard, parsing is gated on this (rates are chosen in step 2). */
+function ratesReady(): boolean {
+  const c = store.rates;
+  return c.elec_per_kwh != null && c.gas_per_therm != null && c.elec_carbon_per_kwh != null;
 }
 
 /* ---------- files ---------- */
 function fileSection(root: HTMLElement, p: Project): HTMLElement {
   const isPdf = p.modelType !== "equest";
-  const card = h(`<div class="card" style="margin-top:16px"><div class="card-hd"><h3>Files</h3><span class="sub">${isPdf ? "TRACE report PDF" : "Baseline & Proposed .SIM / .inp"}</span><div class="right"><button class="btn btn-primary btn-sm" id="mk-parse">${ICON.bolt()} Parse</button></div></div></div>`);
+  const gate = EMBED && !ratesReady();
+  const card = h(`<div class="card" style="margin-top:16px"><div class="card-hd"><h3>Files</h3><span class="sub">${isPdf ? "TRACE report PDF" : "Baseline & Proposed .SIM / .inp"}</span><div class="right"><button class="btn btn-primary btn-sm" id="mk-parse" ${gate ? 'disabled title="Set utility rates in step 2 first"' : ""}>${ICON.bolt()} Parse</button></div></div></div>`);
+  if (gate) card.appendChild(h(`<div class="source-note" style="border-left-color:var(--red);margin-top:10px">Select the <b>utility rates</b> in step 2 before parsing the model.</div>`));
 
   if (p.modelType === "iesve") { card.appendChild(h(`<div class="empty"><div class="big">🧪</div><div style="color:var(--g500)">IES-VE parser is under development.</div></div>`)); return card; }
 
@@ -234,6 +256,7 @@ function uploadZone(root: HTMLElement, p: Project, role: string, label: string, 
 type ParsedModel = { name: string; row: Row; cat?: "leed" | "code" | "proposed"; rot?: number };
 
 async function parseProject(root: HTMLElement, p: Project) {
+  if (EMBED && !ratesReady()) { toast("Select the utility rates in step 2 first"); return; }
   logClear();
   const prog = document.getElementById("mk-prog")!; const bar = document.getElementById("mk-prog-b") as HTMLElement;
   const pl = document.getElementById("mk-prog-l")!; const pp = document.getElementById("mk-prog-p")!;
@@ -267,8 +290,9 @@ async function parseProject(root: HTMLElement, p: Project) {
     if (!models.length) throw new Error("no models parsed — check the uploaded files");
     logLine(`<span class="ok">✓ Parsed ${models.length} model(s) — complete the setup below</span>`); paintLog();
 
-    // ── Phase 2 — the single setup popup (rates + assignment + project info). ──
-    await runSetup(root, p, models, modelRates);
+    // ── Phase 2 — setup. Embed: inline card (no popup). Standalone: the popup. ──
+    if (EMBED) { pendingSetup = { models, modelRates }; rerender(root); }
+    else await runSetup(root, p, models, modelRates);
   } catch (e: any) {
     prog.classList.add("hide");
     logLine(`<span class="err">✗ ${esc(e.message)}</span>`);
@@ -412,8 +436,10 @@ export type SetupResult = { action: "finish" | "draft"; bl: Row[]; prop: Row[]; 
       • Project Info — the full sheet incl. the Performance Goals table + QA/QC.
     Applies the rates to store.rates and resolves the rows + ProjectInfo with the
     chosen action ("finish" or "draft"), or null if the user closes it. */
-function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | null): Promise<SetupResult> {
-  return new Promise((resolve) => {
+/** Builds the shared setup form (rates + model assignment + project info) into a
+    detached element. The Populate / Save-as-draft buttons call onSubmit with the
+    gathered result; the caller wires any cancel → onSubmit(null). */
+function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRates | null, onSubmit: (r: SetupResult) => void, hideRates = false): HTMLElement {
     const c = store.rates;
     const prev = store.projectInfo || {};
     // a "from the model" rate must never be overwritten by a fetch
@@ -465,12 +491,11 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
     const sec = (t: string) => `<div style="font-family:var(--font);font-weight:800;font-size:13px;margin:16px 0 8px;padding-top:12px;border-top:1px solid var(--g150)">${t}</div>`;
     const modelNote = fromModel ? ` <span style="color:var(--g400);font-weight:400">(from model — kept)</span>` : "";
 
-    const overlay = h(`
-      <div class="modal-overlay"><div class="modal" style="max-width:720px"><div class="modal-hd"><h3>Project setup</h3><span class="x">${ICON.close("x")}</span></div>
-        <div class="modal-body" style="max-height:74vh;overflow:auto">
+    const host = h(`
+      <div>
           <p style="font-size:12.5px;color:var(--g500);margin-bottom:6px">Everything that drives the workbook in one place. Confirm or edit, then <b>Populate</b> — or <b>Save as draft</b> to finish later. Values are written straight into the <b>Project Info</b> sheet.</p>
 
-          <div style="font-family:var(--font);font-weight:800;font-size:13px;margin:6px 0 8px">Utility rates</div>
+          ${hideRates ? "" : `<div style="font-family:var(--font);font-weight:800;font-size:13px;margin:6px 0 8px">Utility rates</div>
           <div class="field" style="margin-bottom:10px"><label>Pincode / ZIP</label>
             <div style="display:flex;gap:8px">
               <input id="setup-zip" placeholder="e.g. 92054" value="${esc(c.pincode || "")}" style="flex:1" />
@@ -483,7 +508,7 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
             <div class="field"><label>Natural Gas ($/therm)${modelNote}</label>${numf("setup-gas", gas0, "0.001", "0.49")}</div>
             <div class="field"><label>Carbon (kg CO2e/kWh)</label>${numf("setup-carbon", carbon0, "0.001", "0.45")}</div>
           </div>
-          <div id="setup-rate-status" style="font-size:12px;color:var(--g500);margin-top:6px"></div>
+          <div id="setup-rate-status" style="font-size:12px;color:var(--g500);margin-top:6px"></div>`}
 
           ${sec("Model assignment")}
           <p style="font-size:11.5px;color:var(--g500);margin:-4px 0 10px"><b>LEED</b> rotations fill BL Data rows 1–4 (0/90/180/270°), <b>Code</b> the next 4; <b>Proposed</b> cases go to Proposed Data (rotations averaged).</p>
@@ -532,30 +557,25 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
             <button class="btn" id="setup-draft" style="flex:1;justify-content:center">Save as draft</button>
             <button class="btn btn-primary" id="setup-go" style="flex:2;justify-content:center">${ICON.bolt()} Populate</button>
           </div>
-        </div></div></div>`);
-    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
-    let done = false;
-    const close = (result: SetupResult) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(result); };
-    overlay.querySelector(".x")!.addEventListener("click", () => close(null));
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
-    overlay.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((s) => s.addEventListener("change", () => {
-      (overlay.querySelector(`.cm-rot[data-i="${s.dataset.i}"]`) as HTMLSelectElement).disabled = s.value === "proposed";
+      </div>`);
+    host.querySelectorAll<HTMLSelectElement>(".cm-cat").forEach((s) => s.addEventListener("change", () => {
+      (host.querySelector(`.cm-rot[data-i="${s.dataset.i}"]`) as HTMLSelectElement).disabled = s.value === "proposed";
     }));
 
     // ---- Fetch rates (never overwrites the model's own electricity/gas)
-    const rstatus = overlay.querySelector("#setup-rate-status") as HTMLElement;
-    overlay.querySelector("#setup-fetch")!.addEventListener("click", async () => {
-      const btn = overlay.querySelector("#setup-fetch") as HTMLButtonElement;
-      const zip = (overlay.querySelector("#setup-zip") as HTMLInputElement).value.trim();
+    const rstatus = host.querySelector("#setup-rate-status") as HTMLElement;
+    host.querySelector("#setup-fetch")?.addEventListener("click", async () => {
+      const btn = host.querySelector("#setup-fetch") as HTMLButtonElement;
+      const zip = (host.querySelector("#setup-zip") as HTMLInputElement).value.trim();
       if (!zip) { rstatus.innerHTML = `<span style="color:var(--red)">enter a pincode / ZIP first</span>`; return; }
       btn.disabled = true; rstatus.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Fetching rates from all sources…`;
       try {
         const got = await fetchRatesForPincode(zip);
         store.rates.pincode = zip;
         if (got.state) { store.rates.state = got.state; }
-        const elecEl = overlay.querySelector("#setup-elec") as HTMLInputElement;
-        const gasEl = overlay.querySelector("#setup-gas") as HTMLInputElement;
-        const carbonEl = overlay.querySelector("#setup-carbon") as HTMLInputElement;
+        const elecEl = host.querySelector("#setup-elec") as HTMLInputElement;
+        const gasEl = host.querySelector("#setup-gas") as HTMLInputElement;
+        const carbonEl = host.querySelector("#setup-carbon") as HTMLInputElement;
         const filled: string[] = [];
         if (!fromModel && got.elec != null) { elecEl.value = String(+got.elec.toFixed(4)); filled.push("electricity"); }
         if (!fromModel && got.gas != null) { gasEl.value = String(+got.gas.toFixed(4)); filled.push("gas"); }
@@ -568,14 +588,14 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
     });
 
     // ---- Calculate Benchmark EUI via Zero Tool (asks the target %, then fills the field)
-    const bstatus = overlay.querySelector("#pi-bmeui-status") as HTMLElement;
-    overlay.querySelector("#pi-bmeui-calc")!.addEventListener("click", async () => {
-      const gv = (id: string) => (overlay.querySelector(id) as HTMLInputElement)?.value.trim();
+    const bstatus = host.querySelector("#pi-bmeui-status") as HTMLElement;
+    host.querySelector("#pi-bmeui-calc")!.addEventListener("click", async () => {
+      const gv = (id: string) => (host.querySelector(id) as HTMLInputElement)?.value.trim();
       const curTarget = (() => { const v = gv("#pi-target"); return v ? +v : (d.targetSavings != null ? +(d.targetSavings * 100).toFixed(2) : 90); })();
       const guess = guessBuildingType(gv("#pi-prog"), gv("#pi-leedsub"));
       const ask = await benchmarkCalcModal(guess, curTarget);
       if (!ask) return;
-      const calcBtn = overlay.querySelector("#pi-bmeui-calc") as HTMLButtonElement;
+      const calcBtn = host.querySelector("#pi-bmeui-calc") as HTMLButtonElement;
       calcBtn.disabled = true;
       bstatus.innerHTML = `<span class="spinner" style="width:11px;height:11px;vertical-align:middle"></span> Calculating from Zero Tool…`;
       try {
@@ -585,9 +605,9 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
         let state = store.rates.state || "";
         if (!state && postalCode) { try { const info = await geocodeAddress({ pincode: postalCode }); if (info.state) { state = info.state; store.rates.state = state; } } catch { /* offline */ } }
         const r = await calcBenchmarkEui({ buildingType: ask.buildingType, gfa, postalCode, state, targetPercent: ask.targetPercent });
-        (overlay.querySelector("#pi-bmeui") as HTMLInputElement).value = String(r.benchmarkEui);
+        (host.querySelector("#pi-bmeui") as HTMLInputElement).value = String(r.benchmarkEui);
         // mirror the entered AIA 2030 target into its field
-        (overlay.querySelector("#pi-target") as HTMLInputElement).value = String(ask.targetPercent);
+        (host.querySelector("#pi-target") as HTMLInputElement).value = String(ask.targetPercent);
         bstatus.innerHTML = `<span style="color:var(--green,#16a34a)">✓ Benchmark ${r.benchmarkEui} kBtu/ft² (${esc(ask.buildingType)}, ${esc(state || postalCode)}) · target ${ask.targetPercent}%</span>`;
       } catch (e: any) { bstatus.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`; }
       calcBtn.disabled = false;
@@ -595,27 +615,30 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
 
     // ---- gather form → result
     const buildResult = (action: "finish" | "draft"): SetupResult => {
-      const gv = (id: string) => (overlay.querySelector(id) as HTMLInputElement)?.value.trim();
+      const gv = (id: string) => (host.querySelector(id) as HTMLInputElement)?.value.trim();
       const gnum = (id: string) => { const v = gv(id); return v === "" || v == null ? undefined : +v; };
       const pct = (id: string) => { const v = gnum(id); return v == null ? undefined : v / 100; };
 
-      // apply utility rates → store.rates (model rates were never overwritten above)
-      const zip = gv("#setup-zip"); if (zip) c.pincode = zip;
-      const e = gnum("#setup-elec"), ga = gnum("#setup-gas"), cb = gnum("#setup-carbon");
-      if (e != null) c.elec_per_kwh = e;
-      if (ga != null) c.gas_per_therm = ga;
-      // Persist the "from model" provenance so a later Resume + Fetch still keeps the
-      // model's own electricity/gas rates (modelRates isn't re-read on resume).
-      if (fromModel) { c.rate_structure = "from model"; if (!c.rate_source) c.rate_source = `Energy model${modelRates?.descr ? ` — ${modelRates.descr}` : ""}`; }
-      else if (e != null && !c.rate_source) { c.rate_source = "Entered / fetched in setup"; c.rate_structure = c.rate_structure || "manual"; }
-      if (cb != null) { c.elec_carbon_per_kwh = cb; c.carbon_method = "manual"; if (!c.carbon_source) c.carbon_source = "Entered / fetched in setup"; }
+      // apply utility rates → store.rates (skipped when the rates block is hidden —
+      // the wizard sets them in step 2). Model rates are never overwritten above.
+      if (!hideRates) {
+        const zip = gv("#setup-zip"); if (zip) c.pincode = zip;
+        const e = gnum("#setup-elec"), ga = gnum("#setup-gas"), cb = gnum("#setup-carbon");
+        if (e != null) c.elec_per_kwh = e;
+        if (ga != null) c.gas_per_therm = ga;
+        // Persist the "from model" provenance so a later Resume + Fetch still keeps the
+        // model's own electricity/gas rates (modelRates isn't re-read on resume).
+        if (fromModel) { c.rate_structure = "from model"; if (!c.rate_source) c.rate_source = `Energy model${modelRates?.descr ? ` — ${modelRates.descr}` : ""}`; }
+        else if (e != null && !c.rate_source) { c.rate_source = "Entered / fetched in setup"; c.rate_structure = c.rate_structure || "manual"; }
+        if (cb != null) { c.elec_carbon_per_kwh = cb; c.carbon_method = "manual"; if (!c.carbon_source) c.carbon_source = "Entered / fetched in setup"; }
+      }
       emit();
 
       // model assignment → baseline / proposed rows
       const bl: Row[] = [], prop: Row[] = [];
       models.forEach((m, i) => {
-        const cat = (overlay.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
-        const rot = +(overlay.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
+        const cat = (host.querySelector(`.cm-cat[data-i="${i}"]`) as HTMLSelectElement).value as "leed" | "code" | "proposed";
+        const rot = +(host.querySelector(`.cm-rot[data-i="${i}"]`) as HTMLSelectElement).value;
         m.row._cat = cat; m.row._rot = cat === "proposed" ? 0 : rot;
         (cat === "proposed" ? prop : bl).push(m.row);
       });
@@ -642,9 +665,38 @@ function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | 
       return { action, bl, prop, info };
     };
 
-    overlay.querySelector("#setup-go")!.addEventListener("click", () => close(buildResult("finish")));
-    overlay.querySelector("#setup-draft")!.addEventListener("click", () => close(buildResult("draft")));
+    host.querySelector("#setup-go")!.addEventListener("click", () => onSubmit(buildResult("finish")));
+    host.querySelector("#setup-draft")!.addEventListener("click", () => onSubmit(buildResult("draft")));
+    return host;
+}
+
+/** The setup popup (standalone Marcus view) — wraps the shared form in a modal. */
+function setupModal(p: Project, models: ParsedModel[], modelRates: ModelRates | null): Promise<SetupResult> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (r: SetupResult) => { if (done) return; done = true; overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); resolve(r); };
+    const form = buildSetupForm(p, models, modelRates, finish);
+    const overlay = h(`<div class="modal-overlay"><div class="modal" style="max-width:720px"><div class="modal-hd"><h3>Project setup</h3><span class="x">${ICON.close("x")}</span></div><div class="modal-body" style="max-height:74vh;overflow:auto" id="sm-host"></div></div></div>`);
+    (overlay.querySelector("#sm-host") as HTMLElement).appendChild(form);
+    document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
+    overlay.querySelector(".x")!.addEventListener("click", () => finish(null));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) finish(null); });
   });
+}
+
+/** Inline setup card (wizard section 3) — the same form, no popup. Completing it
+    commits the parse and unlocks the Excel step. */
+function inlineSetupCard(root: HTMLElement, p: Project): HTMLElement {
+  const card = h(`<div class="card" style="margin-top:16px;border-color:var(--red-soft)"><div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.bolt()}</div><h3>Complete setup to continue</h3><span class="sub">rates · model assignment · project info — required before Excel</span></div><div id="is-host"></div></div>`);
+  const pending = pendingSetup!;
+  const form = buildSetupForm(p, pending.models, pending.modelRates, async (res) => {
+    if (!res) return;
+    store.projectInfo = res.info;
+    pendingSetup = null;
+    await commitParse(root, p, res.bl, res.prop, res.action === "draft");
+  }, true); // hideRates — the wizard sets utility rates in step 2
+  (card.querySelector("#is-host") as HTMLElement).appendChild(form);
+  return card;
 }
 
 /** Open the setup popup for a project's parsed models, then commit (finish) or
@@ -683,7 +735,7 @@ async function commitParse(root: HTMLElement, p: Project, bl: Row[], prop: Row[]
   p.parsed = { bl, prop, summary } as any; p.rates = store.rates as any; (p as any).projectInfo = store.projectInfo; (p as any).setupDraft = isDraft;
   emit(); toast(isDraft ? "✓ Draft saved — resume any time" : `✓ Populated ${bl.length + prop.length} model(s)`);
   rerender(root);
-  if (!isDraft) setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+  if (!isDraft && !EMBED) setTimeout(() => { const a = document.getElementById("acc-analysis"); a?.classList.add("open"); document.getElementById("acc-analysis-body") && drawAnalysis(); a?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
 }
 function computeSummary(bl: Row[], prop: Row[]) {
   const rows = [...bl, ...prop].map((r) => enrichRow(r, store.rates));
@@ -709,7 +761,7 @@ function simpleAcc(id: string, title: string, sub: string, body: HTMLElement, op
 }
 function logsAccordion(): HTMLElement {
   const body = h(`<pre class="log" id="mk-log"></pre>`);
-  const acc = simpleAcc("acc-logs", "Logs", "parse output", body, true);
+  const acc = simpleAcc("acc-logs", "Logs", "parse output", body, !EMBED); // collapsed inside the wizard
   setTimeout(paintLog, 0);
   return acc;
 }
@@ -719,7 +771,8 @@ let analysisRoot: HTMLElement | null = null;
 function analysisAccordion(root: HTMLElement): HTMLElement {
   const body = h(`<div id="mk-analysis"></div>`);
   analysisRoot = body;
-  const acc = simpleAcc("acc-analysis", "Project Analysis", "dashboards (same for every model type)", body, store.blRows.length + store.propRows.length > 0, () => drawAnalysis());
+  // Collapsed by default inside the wizard (embed); auto-open in the standalone view.
+  const acc = simpleAcc("acc-analysis", "Project Analysis", "dashboards (same for every model type)", body, !EMBED && store.blRows.length + store.propRows.length > 0, () => drawAnalysis());
   return acc;
 }
 function drawAnalysis() { if (!analysisRoot) return; analysisRoot.innerHTML = ""; renderAnalysis(analysisRoot, store.blRows, store.propRows, "mk"); }

@@ -1,80 +1,73 @@
 /* ============================================================
- *  Dashboard — project hub. Pick a project, then reach its tools:
- *    1. Project Utility Data        → Utility Rates
- *    2. Project Energy Data         → a. Energy Results Comparison (Marcus)
- *                                     b. Energy Results Report (Word Report)
- *                                     c. MEPC Calculator
- *  A small portfolio overview (stats + charts) sits below the hub.
+ *  Project Setup — the project hub. Create a new (guided) project or
+ *  open an existing one from the cards. Selecting a project loads it
+ *  so the sidebar tools operate on it. Portfolio stats now live in
+ *  their own "Portfolio Overview" tab.
  * ============================================================ */
 import { store } from "../store";
 import { Projects, Project, authUser } from "../api";
-import { h, esc, fmt, fmtCompact, toast } from "../ui/util";
+import { h, esc, fmt } from "../ui/util";
 import { ICON } from "../ui/icons";
-import { makeChart, gridOpts, PALETTE } from "../ui/charts";
 import { navigate, Route } from "../ui/shell";
-
-type Tool = { icon: string; title: string; desc: string; route: Route };
 
 export async function renderDashboard(root: HTMLElement) {
   root.appendChild(h(`
     <div class="page-head">
-      <div><h1>Dashboard</h1><p>Select a project to open its utility &amp; energy tools${authUser?.role === "admin" ? " · admin sees all users" : ""}.</p></div>
-      <div class="actions"><button class="btn" id="db-wizard">${ICON.bolt()} New (Guided)</button><button class="btn btn-primary" id="db-new">${ICON.plus()} New Project</button></div>
+      <div><h1>Project Setup</h1><p>Start a new guided project or open an existing one${authUser?.role === "admin" ? " · admin sees all users" : ""}.</p></div>
     </div>
   `));
-  root.querySelector("#db-new")!.addEventListener("click", () => { store.currentProject = null; navigate("marcus"); });
-  root.querySelector("#db-wizard")!.addEventListener("click", () => { store.currentProject = null; navigate("wizard"); });
+
+  /* ---------- entry box: New Project · Existing Projects ---------- */
+  const entry = h(`
+    <div class="card" style="margin-top:16px">
+      <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.bolt()}</div><h3>Get started</h3><span class="sub">create a project (guided) or open an existing one</span></div>
+      <div class="grid cards-2" style="gap:12px;margin-top:6px">
+        <button class="btn btn-primary" id="ps-new" style="justify-content:center;padding:16px;font-size:14px">${ICON.plus()} New Project</button>
+        <button class="btn" id="ps-existing" style="justify-content:center;padding:16px;font-size:14px">${ICON.dashboard()} Existing Projects</button>
+      </div>
+    </div>
+  `);
+  root.appendChild(entry);
+  entry.querySelector("#ps-new")!.addEventListener("click", () => { store.currentProject = null; navigate("wizard"); });
 
   let projects: Project[] = [];
   try { projects = (await Projects.list()).projects; }
   catch (e: any) { root.appendChild(h(`<div class="source-note" style="border-left-color:var(--red)">${esc(e.message)}</div>`)); return; }
 
+  /* ---------- selected-project banner + quick links ---------- */
+  const selCard = h(`<div class="card" style="margin-top:16px;display:none" id="ps-sel">
+    <div id="ps-selinfo" style="font-size:12.5px;color:var(--g500)"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap" id="ps-links"></div>
+  </div>`);
+  const QUICK: { route: Route; label: string }[] = [
+    { route: "rates", label: "Utility Data" },
+    { route: "marcus", label: "Energy Comparison" },
+    { route: "report", label: "Report" },
+    { route: "mepc", label: "MEPC" },
+  ];
+  const links = selCard.querySelector("#ps-links")!;
+  QUICK.forEach((q) => { const b = h(`<button class="btn btn-sm">${esc(q.label)} →</button>`); b.addEventListener("click", () => navigate(q.route)); links.appendChild(b); });
+  root.appendChild(selCard);
+
+  /* ---------- existing projects (cards, revealed on demand) ---------- */
+  const existingWrap = h(`<div id="ps-existing-wrap" style="display:none;margin-top:16px"></div>`);
+  root.appendChild(existingWrap);
+  const existingBtn = entry.querySelector("#ps-existing") as HTMLButtonElement;
+  existingBtn.addEventListener("click", () => {
+    const open = existingWrap.style.display !== "none";
+    existingWrap.style.display = open ? "none" : "block";
+    if (!open) existingWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+
   if (!projects.length) {
-    root.appendChild(h(`<div class="card" style="margin-top:16px"><div class="empty"><div class="big">🏢</div><div style="font-weight:600;color:var(--g600);margin-bottom:6px">No projects yet</div><button class="btn btn-primary btn-sm" id="db-go">${ICON.plus()} Create your first project</button></div></div>`));
-    root.querySelector("#db-go")?.addEventListener("click", () => navigate("marcus"));
+    existingWrap.appendChild(h(`<div class="card"><div class="empty"><div class="big">🏢</div><div style="font-weight:600;color:var(--g600);margin-bottom:6px">No projects yet</div><button class="btn btn-primary btn-sm" id="ps-first">${ICON.plus()} Create your first project</button></div></div>`));
+    existingWrap.querySelector("#ps-first")?.addEventListener("click", () => navigate("wizard"));
     return;
   }
 
-  /* ---------- project selector ---------- */
-  const preId = store.currentProject && projects.some((p) => p.id === store.currentProject!.id) ? store.currentProject!.id : "";
-  const selCard = h(`
-    <div class="card" style="margin-top:16px">
-      <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.bolt()}</div><h3>Select a project</h3><span class="sub">its tools unlock once a project is chosen</span></div>
-      <select id="db-proj" class="unit-pick" style="width:100%;max-width:460px">
-        <option value="">— choose a project —</option>
-        ${projects.sort((a, b) => b.updatedAt - a.updatedAt).map((p) => `<option value="${p.id}" ${p.id === preId ? "selected" : ""}>${esc(p.name)} — ${esc(p.address || "no address")}${p.summary ? ` · EUI ${fmt(p.summary.eui, 1)}` : " · not parsed"}</option>`).join("")}
-      </select>
-      <div id="db-selinfo" style="margin-top:10px;font-size:12.5px;color:var(--g500)"></div>
-    </div>
-  `);
-  root.appendChild(selCard);
-
-  /* ---------- tool sections ---------- */
-  const utilityTools: Tool[] = [
-    { icon: ICON.rates("x"), title: "Project Utility Data", desc: "Electricity, gas, carbon &amp; water rates + citations for this project.", route: "rates" },
-  ];
-  const energyTools: Tool[] = [
-    { icon: ICON.chart("x"), title: "Energy Results Comparison", desc: "Parse the models &amp; compare baseline vs proposed (EUI, energy, carbon, cost) · export Excel.", route: "marcus" },
-    { icon: ICON.book("x"), title: "Energy Results Report", desc: "Auto-fill the formatted Energy Model Report (.docx) from the comparison workbook.", route: "report" },
-    { icon: ICON.table("x"), title: "MEPC Calculator", desc: "eQUEST/DOE-2 .SIM → LEED v4 Minimum Energy Performance Calculator.", route: "mepc" },
-  ];
-
-  root.appendChild(sectionTitle("1 · Project Utility Data"));
-  root.appendChild(toolGrid(utilityTools));
-  root.appendChild(sectionTitle("2 · Project Energy Data"));
-  root.appendChild(toolGrid(energyTools));
-
-  const setEnabled = (on: boolean) => {
-    root.querySelectorAll<HTMLElement>(".tool-card").forEach((el) => {
-      el.classList.toggle("disabled", !on);
-      el.style.opacity = on ? "1" : ".5";
-      el.style.pointerEvents = on ? "auto" : "none";
-    });
-  };
-
   const selectProject = async (id: string) => {
-    const info = selCard.querySelector("#db-selinfo")!;
-    if (!id) { store.currentProject = null; info.textContent = "No project selected — pick one above to enable the tools."; setEnabled(false); return; }
+    selCard.style.display = "block";
+    const info = selCard.querySelector("#ps-selinfo")!;
     info.innerHTML = `<span class="spinner" style="width:12px;height:12px;vertical-align:middle"></span> Loading…`;
     try {
       const { project } = await Projects.get(id);
@@ -83,73 +76,29 @@ export async function renderDashboard(root: HTMLElement) {
       store.propRows = project.parsed?.prop || [];
       if (project.rates) store.rates = { ...store.rates, ...project.rates };
       const m = project.modelType, parsed = !!project.parsed;
-      info.innerHTML = `▸ <b>${esc(project.name)}</b> · <span class="pt-badge pt-${m}">${esc(m)}</span> · ${esc(project.address || "no address")} · ${parsed ? `<span class="pill pill-red" style="font-size:9px">parsed</span>` : `<span class="pill pill-gray" style="font-size:9px">not parsed</span>`}`;
-      setEnabled(true);
-    } catch (e: any) { info.innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`; setEnabled(false); }
+      info.innerHTML = `▸ <b>${esc(project.name)}</b> · <span class="pt-badge pt-${m}">${esc(m)}</span> · ${esc(project.address || "no address")} · ${parsed ? `<span class="pill pill-red" style="font-size:9px">parsed</span>` : `<span class="pill pill-gray" style="font-size:9px">not parsed</span>`} — open a tool:`;
+      existingWrap.querySelectorAll<HTMLElement>(".proj-tile").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
+      selCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e: any) { info.innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`; }
   };
 
-  selCard.querySelector("#db-proj")!.addEventListener("change", (e) => selectProject((e.target as HTMLSelectElement).value));
-  selectProject(preId); // honor a pre-selected project, else show the disabled state
-
-  /* ---------- portfolio overview ---------- */
-  root.appendChild(overview(projects));
-}
-
-function sectionTitle(text: string): HTMLElement {
-  return h(`<div style="font-family:var(--font);font-weight:800;font-size:15px;margin:22px 0 10px;display:flex;align-items:center;gap:8px"><span style="width:4px;height:16px;background:var(--red);border-radius:3px;display:inline-block"></span>${esc(text)}</div>`);
-}
-function toolGrid(tools: Tool[]): HTMLElement {
+  existingWrap.appendChild(h(`<div style="font-family:var(--font);font-weight:800;font-size:14px;margin:2px 0 10px">Your projects <span style="color:var(--g400);font-weight:500">(${projects.length})</span></div>`));
   const grid = h(`<div class="proj-grid"></div>`);
-  for (const t of tools) {
-    const card = h(`<div class="proj-tile tool-card" data-route="${t.route}" style="transition:opacity .15s">
-      <div style="font-size:24px;color:var(--red)">${t.icon}</div>
-      <h4 style="margin-top:8px">${t.title}</h4>
-      <div class="pt-meta" style="margin-top:6px;line-height:1.5">${t.desc}</div>
+  projects.sort((a, b) => b.updatedAt - a.updatedAt).forEach((p) => {
+    const card = h(`<div class="proj-tile" data-id="${p.id}" style="cursor:pointer">
+      <h4 style="margin:0">${esc(p.name)}</h4>
+      <div class="pt-meta" style="margin-top:6px;line-height:1.5">${esc(p.address || "no address")}</div>
+      <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="pt-badge pt-${p.modelType}">${esc(p.modelType)}</span>
+        ${p.summary ? `<span class="pill pill-red" style="font-size:9px">EUI ${fmt(p.summary.eui, 1)}</span>` : `<span class="pill pill-gray" style="font-size:9px">not parsed</span>`}
+      </div>
     </div>`);
-    card.addEventListener("click", () => {
-      if (!store.currentProject) { toast("Select a project first"); return; }
-      navigate(t.route);
-    });
+    card.addEventListener("click", () => selectProject(p.id));
     grid.appendChild(card);
-  }
-  return grid;
-}
+  });
+  existingWrap.appendChild(grid);
 
-/* ---------- portfolio overview (stats + charts) ---------- */
-function overview(projects: Project[]): HTMLElement {
-  const wrap = h(`<div></div>`);
-  wrap.appendChild(sectionTitle("Portfolio overview"));
-  const parsed = projects.filter((p) => p.summary);
-  const totalEnergy = parsed.reduce((a, p) => a + (p.summary.totalEnergy || 0), 0);
-  const totalCarbon = parsed.reduce((a, p) => a + (p.summary.totalCarbon || 0), 0);
-  const totalCost = parsed.reduce((a, p) => a + (p.summary.totalCost || 0), 0);
-  const avgEui = parsed.length ? parsed.reduce((a, p) => a + (p.summary.eui || 0), 0) / parsed.length : 0;
-  const models = parsed.reduce((a, p) => a + (p.summary.models || 0), 0);
-
-  const cards = h(`<div class="grid cards-4"></div>`);
-  cards.appendChild(stat("Projects", String(projects.length), "", true, `${models} models parsed`));
-  cards.appendChild(stat("Avg EUI", fmt(avgEui, 1), "kBtu/ft²", false, "portfolio average"));
-  cards.appendChild(stat("Total Energy", fmtCompact(totalEnergy), "kBtu", false, "all projects"));
-  cards.appendChild(stat("Total Carbon", fmtCompact(totalCarbon), "kg CO₂e", false, totalCost > 0 ? "$" + fmtCompact(totalCost) + " cost" : "—"));
-  wrap.appendChild(cards);
-
-  if (parsed.length) {
-    const grid = h(`<div class="dash-grid" style="margin-top:16px"></div>`);
-    grid.appendChild(h(`<div class="card"><div class="card-hd"><h3>EUI by Project</h3><span class="sub">kBtu/ft²</span></div><div class="chart-box"><canvas id="db-eui"></canvas></div></div>`));
-    grid.appendChild(h(`<div class="card"><div class="card-hd"><h3>Energy by Project</h3><span class="sub">kBtu</span></div><div class="chart-box"><canvas id="db-energy"></canvas></div></div>`));
-    wrap.appendChild(grid);
-    requestAnimationFrame(() => {
-      drawBar("db-eui", parsed.map((p) => p.name), parsed.map((p) => +(p.summary.eui || 0).toFixed(1)));
-      drawBar("db-energy", parsed.map((p) => p.name), parsed.map((p) => Math.round(p.summary.totalEnergy || 0)));
-    });
-  }
-  return wrap;
-}
-
-function stat(label: string, value: string, unit: string, feature: boolean, delta: string): HTMLElement {
-  return h(`<div class="card stat ${feature ? "feature" : ""}"><div class="top"><span class="label">${esc(label)}</span><span class="arrow">${ICON.arrow()}</span></div><div><span class="value">${esc(value)}</span><span class="unit">${esc(unit)}</span></div><div class="delta">${esc(delta)}</div></div>`);
-}
-function drawBar(id: string, labels: string[], data: number[]) {
-  const c = document.getElementById(id) as HTMLCanvasElement; if (!c) return;
-  makeChart(c, { type: "bar", data: { labels, datasets: [{ data, backgroundColor: labels.map((_, i) => i === 0 ? PALETTE[0] : "#1a1a1d"), borderRadius: 6, maxBarThickness: 44 }] }, options: gridOpts(false) });
+  // If a project was already active, reveal the cards + its banner.
+  const preId = store.currentProject && projects.some((p) => p.id === store.currentProject!.id) ? store.currentProject!.id : "";
+  if (preId) { existingWrap.style.display = "block"; selectProject(preId); }
 }
