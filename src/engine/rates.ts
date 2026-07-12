@@ -326,6 +326,7 @@ export function computeDesOption1Rates(inp: DesRateInput): DesRateResult {
  * ============================================================ */
 export interface LocationInfo {
   name: string; state: string; stateName: string;
+  city?: string; country?: string;
   egrid_kg_per_kwh: number | null; source: string;
 }
 
@@ -370,9 +371,10 @@ export async function geocodeAddress(parts: { city?: string; state?: string; cou
   const stateName: string = a.state || parts.state || "";
   const state = stateAbbr(stateName);
   const place = a.city || a.town || a.village || a.county || parts.city || "";
+  const country = a.country || (cc === "ca" ? "Canada" : "USA");
   const name = item.display_name || q;
   return {
-    name, state, stateName,
+    name, state, stateName, city: place, country,
     egrid_kg_per_kwh: state ? (EGRID_STATE_KG_PER_KWH[state] ?? null) : null,
     source: "OpenStreetMap Nominatim forward-geocode + EPA eGRID2022 state factor",
     lat, lon,

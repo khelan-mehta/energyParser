@@ -14,7 +14,7 @@ import {
   GatherOpts, RateCandidate, EIA_COMM_CENTS_PER_KWH, EIA_GAS_DOLLARS_PER_THERM, WATER_DOLLARS_PER_KGAL,
 } from "../engine/sources";
 import { Rates, RateHistory, RateSnapshot, RateSet, authUser } from "../api";
-import { utilityProfileCard } from "../ui/utilityProfile";
+import { barFor, renderProfileBar, profileLegend, exportProfilePptxEditable, Entity as ProfEntity } from "../ui/utilityProfile";
 
 type Entity = "electricity" | "gas" | "carbon" | "water";
 const ENTITIES: Entity[] = ["electricity", "gas", "carbon", "water"];
@@ -77,7 +77,6 @@ export function renderRates(root: HTMLElement, opts: { embedded?: boolean } = {}
   ));
   root.appendChild(addressCard(root));
   root.appendChild(finalTable(root));
-  root.appendChild(utilityProfileCard());
   root.appendChild(waterCard(root));
   root.appendChild(districtCard());
   root.appendChild(savedSetsCard(root));
@@ -174,27 +173,20 @@ async function loadSavedSets(root: HTMLElement) {
   scroll.appendChild(table); body.appendChild(scroll);
 }
 
+// Address is captured in Basic Info now; here we only surface the pincode/location
+// and a button to locate + source rates from it.
 function addressCard(root: HTMLElement): HTMLElement {
   const cfg = store.rates;
+  const loc = cfg.location_name || [cfg.city, cfg.state].filter(Boolean).join(", ");
   const card = h(`
     <div class="card" style="margin-bottom:16px">
-      <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.pin("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div><h3>Project Address</h3><div class="right"><button class="gear-btn" id="r-gear" title="Coordinates & API keys">${ICON.settings("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--g600);width:17px;height:17px;fill:none;stroke-width:1.8"')}</button></div></div>
-      <div class="form-grid">
-        <div class="field"><label>City</label><input id="ad-city" placeholder="e.g. Bentonville" value="${esc(cfg.city)}" /></div>
-        <div class="field"><label>State</label><select id="ad-state"><option value="">— select —</option>${Object.keys(STATE_NAMES).map((s) => `<option value="${s}" ${cfg.state === s ? "selected" : ""}>${s} — ${STATE_NAMES[s]}</option>`).join("")}</select></div>
-        <div class="field"><label>Country</label><input id="ad-country" value="${esc(cfg.country || "USA")}" /></div>
-        <div class="field"><label>Pincode / ZIP</label><input id="ad-pin" placeholder="e.g. 72712" value="${esc(cfg.pincode)}" /></div>
-      </div>
+      <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.pin("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--red);width:16px;height:16px;fill:none;stroke-width:2"')}</div><h3>Project Location</h3><div class="right"><button class="gear-btn" id="r-gear" title="Coordinates & API keys">${ICON.settings("x").replace('class="nav-ico"', 'class="x" style="stroke:var(--g600);width:17px;height:17px;fill:none;stroke-width:1.8"')}</button></div></div>
+      <div style="font-size:13px;color:var(--g600)">Pincode / ZIP <b>${esc(cfg.pincode || "—")}</b>${loc ? ` · ${esc(loc)}` : ""} <span style="color:var(--g400)">— set in Basic Info</span></div>
       <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-dark" id="ad-locate">${ICON.pin("x")} Locate &amp; source rates</button>
-        <span id="ad-status" style="font-size:13px;color:var(--g600)">${cfg.location_name ? "📍 " + esc(cfg.location_name.slice(0, 80)) : "Enter an address to begin."}</span>
+        <span id="ad-status" style="font-size:13px;color:var(--g600)">${cfg.location_name ? "📍 " + esc(cfg.location_name.slice(0, 80)) : cfg.pincode ? "Ready — hit Locate to source rates." : "Set the pincode in Basic Info first."}</span>
       </div>
     </div>`);
-  const v = (s: string) => (card.querySelector(s) as HTMLInputElement).value;
-  card.querySelector("#ad-city")!.addEventListener("input", () => cfg.city = v("#ad-city"));
-  card.querySelector("#ad-state")!.addEventListener("change", () => { cfg.state = v("#ad-state"); autoCarbon(); rerender(root); });
-  card.querySelector("#ad-country")!.addEventListener("input", () => cfg.country = v("#ad-country"));
-  card.querySelector("#ad-pin")!.addEventListener("input", () => cfg.pincode = v("#ad-pin"));
   card.querySelector("#ad-locate")!.addEventListener("click", () => locate(root, card));
   card.querySelector("#r-gear")!.addEventListener("click", () => openSettings(root));
   return card;
@@ -352,33 +344,23 @@ function copySources(e: Entity) {
   navigator.clipboard?.writeText(text).then(() => toast("✓ Selected source copied")).catch(() => { prompt("Copy:", text); });
 }
 
-/* ---------- comparison graph (expandable modal) ---------- */
+/* ---------- Project Utility Profile (per-utility gradient bar, expandable modal) ---------- */
 function openCompareModal(e: Entity) {
-  const [unitLabel, factor] = UNITS[e].opts[unitState[e]];
-  const table = compTable(e);
-  const cur = store.rates.state;
-  // include current state + a broad comparison set; sort ascending; add US avg
-  const SET = ["CA", "TX", "NY", "FL", "IL", "WA", "CO", "OH", "GA", "MA", "PA", "AZ", "NV"];
-  const states = new Set(SET); if (cur && table[cur] != null) states.add(cur);
-  const rows = [...states].filter((s) => table[s] != null).map((s) => ({ s, v: table[s] * factor })).sort((a, b) => a.v - b.v);
-  const all = Object.values(table); const avg = (all.reduce((a, b) => a + b, 0) / all.length) * factor;
-  const labels = [...rows.map((r) => r.s), "US avg"];
-  const values = [...rows.map((r) => +r.v.toFixed(3)), +avg.toFixed(3)];
-  const colors = labels.map((l) => l === cur ? PALETTE[0] : l === "US avg" ? "#a1a1aa" : "#1a1a1d");
-
-  const overlay = h(`<div class="modal-overlay"><div class="modal" style="width:min(640px,94vw)"><div class="modal-hd"><h3>${esc(META[e].name)} — vs other states</h3><span class="x">${ICON.close("x")}</span></div><div class="modal-body"><div style="font-size:12.5px;color:var(--g500);margin-bottom:12px">Commercial ${esc(META[e].name.toLowerCase())} rate in <b>${esc(unitLabel)}</b>${cur ? ` · your state <b style="color:var(--red)">${esc(cur)}</b> highlighted` : ""}.</div><div style="height:340px"><canvas id="cmp-modal"></canvas></div></div></div></div>`);
+  const bar = barFor(e as ProfEntity);
+  const overlay = h(`<div class="modal-overlay"><div class="modal" style="width:min(760px,95vw)"><div class="modal-hd"><h3>${esc(bar.name)} — Project Utility Profile</h3><span class="x">${ICON.close("x")}</span></div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--g500);margin-bottom:6px">Where this project's rate sits between the US-lowest and US-highest state values.</div>
+      <div id="pb-host"></div>
+      <div id="pb-legend"></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn btn-sm btn-dark" id="pb-ppt">⬇ Export PPT (editable)</button></div>
+    </div></div></div>`);
   document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
   const close = () => { overlay.classList.remove("show"); setTimeout(() => overlay.remove(), 200); };
   overlay.querySelector(".x")!.addEventListener("click", close);
   overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
-  requestAnimationFrame(() => {
-    const c = overlay.querySelector("#cmp-modal") as HTMLCanvasElement;
-    makeChart(c, {
-      type: "bar",
-      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderRadius: 5, maxBarThickness: 30 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x: any) => `${x.label}: ${x.raw} ${unitLabel}` } } }, scales: { x: { grid: { display: false }, border: { display: false } }, y: { grid: { color: "#f0f0f1" }, border: { display: false } } } },
-    });
-  });
+  (overlay.querySelector("#pb-host") as HTMLElement).appendChild(renderProfileBar(bar));
+  (overlay.querySelector("#pb-legend") as HTMLElement).appendChild(profileLegend());
+  overlay.querySelector("#pb-ppt")!.addEventListener("click", () => exportProfilePptxEditable());
 }
 
 /* ---------- water detail card ---------- */

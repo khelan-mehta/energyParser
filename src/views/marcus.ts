@@ -5,7 +5,7 @@
  * ============================================================ */
 import { store, emit, logClear, logLine } from "../store";
 import type { ProjectInfo } from "../store";
-import { Projects, Rates, Project, RateSet } from "../api";
+import { Projects, Rates, Project, RateSet, authUser } from "../api";
 import { h, esc, toast, fmt, fmtCompact } from "../ui/util";
 import { ICON } from "../ui/icons";
 import { SIMParser, Row } from "../engine/sim";
@@ -22,7 +22,6 @@ import { COLUMNS } from "../engine/columns";
 import { renderAnalysis } from "./analysis";
 import { navigate } from "../ui/shell";
 import { infoBoxes } from "../ui/infoboxes";
-import { utilityProfileCard } from "../ui/utilityProfile";
 
 const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: string; soon?: boolean }[] = [
   { key: "equest", name: "eQUEST", icon: "🏢", sub: ".SIM / .inp (DOE-2.2)" },
@@ -184,12 +183,10 @@ function renderWorkspace(root: HTMLElement, p: Project) {
   root.appendChild(fileSection(root, p));
 
   if (EMBED) {
-    // Section-3 layout: inline setup (no popup) → doc/cost details → rates recap
-    // → graphs → analysis (collapsed) → AI (collapsed) → logs (collapsed).
+    // Section-3 layout: inline setup (no popup) → rates recap → AI (collapsed) →
+    // logs (collapsed). Project Analysis is now its own wizard section (step 4).
     if (pendingSetup) root.appendChild(inlineSetupCard(root, p));
-    if (EMBED_EXTRA) root.appendChild(EMBED_EXTRA());
     root.appendChild(ratesAccordion(root, p));
-    root.appendChild(analysisAccordion(root));
     root.appendChild(aiAccordion());
     root.appendChild(logsAccordion());
   } else {
@@ -441,6 +438,7 @@ export type SetupResult = { action: "finish" | "draft"; bl: Row[]; prop: Row[]; 
     gathered result; the caller wires any cancel → onSubmit(null). */
 function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRates | null, onSubmit: (r: SetupResult) => void, hideRates = false): HTMLElement {
     const c = store.rates;
+    const todayStr = new Date().toISOString().slice(0, 10);
     const prev = store.projectInfo || {};
     // a "from the model" rate must never be overwritten by a fetch
     const fromModel = !!modelRates || c.rate_structure === "from model";
@@ -517,13 +515,10 @@ function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRate
 
           ${sec("Project information")}
           <div class="grid cards-2" style="gap:10px">
-            <div class="field"><label>Project Name</label>${txt("pi-name", d.projectName)}</div>
-            <div class="field"><label>ASHRAE Climate Zone</label>${txt("pi-cz", d.climateZone, "e.g. 3B")}</div>
-            <div class="field"><label>Program Type <span style="color:var(--g400)">(optional)</span></label>${txt("pi-prog", d.programType, "e.g. Office, School")}</div>
             <div class="field"><label>Gross Conditioned Floor Area (ft²)</label>${numf("pi-area", d.floorArea, "1", "13652")}</div>
           </div>
 
-          ${sec("Baseline information")}
+          ${sec("AIA information")}
           <div class="grid cards-2" style="gap:10px">
             <div class="field"><label>AIA 2030 Benchmark EUI (kBtu/ft²)</label>
               <div style="display:flex;gap:8px">
@@ -537,7 +532,6 @@ function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRate
             <div class="field"><label>LEED Type</label>${sel("pi-leedtype", LEED_TYPES, d.leedType)}</div>
             <div class="field"><label>LEED Subcategory</label>${sel("pi-leedsub", LEED_SUBCATS, d.leedSubcategory)}</div>
             <div class="field"><label>Energy Code Standard</label>${txt("pi-code", d.energyCodeStandard)}</div>
-            <div class="field"><label>Energy Code Includes Process Loads?</label>${sel("pi-procload", YES_NO, d.energyCodeProcessLoads)}</div>
           </div>
 
           ${sec("Performance goals")}
@@ -548,10 +542,15 @@ function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRate
 
           ${sec("QA/QC")}
           <div class="grid cards-3" style="gap:10px">
-            <div class="field"><label>Author</label>${txt("pi-author", d.author)}</div>
-            <div class="field"><label>Date</label>${txt("pi-date", d.date, "YYYY-MM-DD")}</div>
+            <div class="field"><label>Author</label><input id="pi-author" value="${esc(d.author || authUser?.name || "")}" placeholder="${esc(authUser?.name || "your name")}" /></div>
+            <div class="field"><label>Date</label><input id="pi-date" value="${esc(d.date || todayStr)}" placeholder="${esc(todayStr)}" /></div>
             <div class="field"><label>Uncertainty Factor (%)</label>${pctf("pi-unc", d.uncertaintyFactor)}</div>
           </div>
+          <div class="grid cards-2" style="gap:10px;margin-top:10px">
+            <div class="field"><label>Energy Code Includes Process Loads?</label>${sel("pi-procload", YES_NO, d.energyCodeProcessLoads)}</div>
+            <div class="field"><label>Model type <span style="color:var(--g400)">(extracted)</span></label><input value="${esc(String(p.modelType))}" disabled style="background:var(--g50)" /></div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;cursor:pointer"><input type="checkbox" id="pi-shading" ${prev.adjacentShading ? "checked" : ""} /> Model includes adjacent shading structures (neighboring buildings &amp; trees)</label>
 
           <div style="display:flex;gap:10px;margin-top:20px">
             <button class="btn" id="setup-draft" style="flex:1;justify-content:center">Save as draft</button>
@@ -643,10 +642,11 @@ function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRate
         (cat === "proposed" ? prop : bl).push(m.row);
       });
 
+      // Merge onto existing projectInfo so Basic-Info fields (client, rating,
+      // weather, building type, location …) captured earlier are preserved.
       const info: ProjectInfo = {
-        projectName: gv("#pi-name") || p.name,
-        climateZone: gv("#pi-cz") || undefined,
-        programType: gv("#pi-prog") || undefined,
+        ...(store.projectInfo || {}),
+        projectName: store.projectInfo?.projectName || p.name,
         floorArea: gnum("#pi-area"),
         benchmarkEui: gnum("#pi-bmeui"),
         targetSavings: pct("#pi-target"),
@@ -661,6 +661,7 @@ function buildSetupForm(p: Project, models: ParsedModel[], modelRates: ModelRate
         author: gv("#pi-author") || undefined,
         date: gv("#pi-date") || undefined,
         uncertaintyFactor: pct("#pi-unc"),
+        adjacentShading: (host.querySelector("#pi-shading") as HTMLInputElement)?.checked,
       };
       return { action, bl, prop, info };
     };

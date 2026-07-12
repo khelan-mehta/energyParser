@@ -8,7 +8,8 @@
  * ============================================================ */
 import { store, emit } from "../store";
 import type { ProjectInfo } from "../store";
-import { Projects, Project } from "../api";
+import { Projects, Project, authUser } from "../api";
+import { renderAnalysis } from "./analysis";
 import { h, esc, toast } from "../ui/util";
 import { ICON } from "../ui/icons";
 import { renderMarcus } from "./marcus";
@@ -16,8 +17,9 @@ import { renderRates } from "./rates";
 import { renderWordReport } from "./wordreport";
 import type { ReportFields } from "../engine/wordreport";
 import { buildWorkbook, downloadWorkbook } from "../engine/workbook";
-import { geocodeAddress } from "../engine/rates";
-import { nearestStations, epwMapUrl } from "../engine/weather";
+import { geocodeAddress, STATE_NAMES } from "../engine/rates";
+import { nearestWeatherFiles, WeatherFile } from "../engine/weather";
+import { ZT_BUILDING_TYPES } from "../engine/zerotool";
 
 /* ---- model types (mirrors marcus.ts) ---- */
 const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: string; soon?: boolean }[] = [
@@ -29,9 +31,10 @@ const MODELS: { key: Project["modelType"]; name: string; icon: string; sub: stri
 const STEPS = [
   { n: 1, title: "Basic Info", sub: "project details + certification" },
   { n: 2, title: "Utility Rates", sub: "electricity · gas · carbon · water" },
-  { n: 3, title: "Model", sub: "upload & parse + values" },
-  { n: 4, title: "Excel", sub: "generate the comparison workbook" },
-  { n: 5, title: "Report", sub: "generate the Word report" },
+  { n: 3, title: "Model", sub: "upload & parse + setup" },
+  { n: 4, title: "Project Analysis", sub: "dashboards (EUI · energy · carbon · cost)" },
+  { n: 5, title: "Excel", sub: "generate the comparison workbook" },
+  { n: 6, title: "Report", sub: "generate the Word report" },
 ];
 
 /* ---- module state (a single wizard at a time) ---- */
@@ -47,7 +50,7 @@ function excelName(name: string): string {
 export function renderWizard(root: HTMLElement) {
   // No project yet → always start at naming. A live project can resume mid-flow.
   if (!store.currentProject) STEP = 1;
-  if (STEP < 1 || STEP > 5) STEP = 1;
+  if (STEP < 1 || STEP > 6) STEP = 1;
 
   root.appendChild(h(`
     <div class="page-head">
@@ -87,7 +90,7 @@ function stepper(root: HTMLElement): HTMLElement {
 function footerNav(root: HTMLElement): HTMLElement {
   const bar = h(`<div style="display:flex;justify-content:space-between;gap:10px;margin-top:22px;border-top:1px solid var(--g150);padding-top:16px">
     <button class="btn" id="wz-back" ${STEP === 1 ? "disabled" : ""}>← Back</button>
-    <button class="btn btn-primary" id="wz-next" ${STEP === 5 ? "disabled" : ""}>Next →</button>
+    <button class="btn btn-primary" id="wz-next" ${STEP === 6 ? "disabled" : ""}>Next →</button>
   </div>`);
   bar.querySelector("#wz-back")!.addEventListener("click", () => goStep(root, STEP - 1));
   bar.querySelector("#wz-next")!.addEventListener("click", () => {
@@ -98,7 +101,7 @@ function footerNav(root: HTMLElement): HTMLElement {
 }
 
 function goStep(root: HTMLElement, n: number) {
-  if (n < 1 || n > 5) return;
+  if (n < 1 || n > 6) return;
   if (n > 1 && !store.currentProject) { toast("Create the project first"); return; }
   STEP = n;
   root.innerHTML = "";
@@ -112,12 +115,22 @@ function renderStep(content: HTMLElement) {
   if (STEP === 1) return stepNaming(content);
   if (STEP === 2) return stepRates(content);
   if (STEP === 3) return stepModel(content);
-  if (STEP === 4) return stepExcel(content);
-  if (STEP === 5) return stepReport(content);
+  if (STEP === 4) return stepAnalysis(content);
+  if (STEP === 5) return stepExcel(content);
+  if (STEP === 6) return stepReport(content);
+}
+
+/* ---------- STEP 4 · Project Analysis ---------- */
+function stepAnalysis(content: HTMLElement) {
+  const haveRows = store.blRows.length + store.propRows.length > 0;
+  if (!haveRows) { content.appendChild(h(`<div class="card"><div class="empty"><div class="big">📊</div><div style="color:var(--g500)">Parse a model in step 3 first — no results yet.</div></div></div>`)); return; }
+  const card = h(`<div class="card"><div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.chart("x")}</div><h3>Project Analysis</h3><span class="sub">baseline vs proposed — EUI · energy · carbon · cost</span></div><div id="wz-analysis"></div></div>`);
+  content.appendChild(card);
+  renderAnalysis(card.querySelector("#wz-analysis") as HTMLElement, store.blRows, store.propRows, "wz");
 }
 
 /* ---------- Basic Info (shared by the create popup + editable step 1) ---------- */
-const RATING_SYSTEMS = ["LEED", "GRIHA", "IGBC", "BREEAM", "Estidama", "Manual input"];
+const RATING_SYSTEMS = ["NA", "LEED", "GRIHA", "IGBC", "BREEAM", "Estidama", "Manual input"];
 
 /** Build the Basic Info form into `host` and wire it. The primary button
  *  creates (or updates) the project, seeds projectInfo/rates, then calls
@@ -125,20 +138,40 @@ const RATING_SYSTEMS = ["LEED", "GRIHA", "IGBC", "BREEAM", "Estidama", "Manual i
 function renderBasicInfo(host: HTMLElement, opts: { primaryLabel: string; onSaved: () => void }) {
   const p = store.currentProject;
   const pi: ProjectInfo = store.projectInfo || {};
-  let sel: Project["modelType"] = p?.modelType || "equest";
+  const modelType: Project["modelType"] = p?.modelType || "equest"; // model type is chosen later (section 3)
+  const c = store.rates;
 
   const ratingOpts = (v?: string) => RATING_SYSTEMS.map((r) => `<option ${r === v ? "selected" : ""}>${esc(r)}</option>`).join("");
+  const stateOpts = (v?: string) => `<option value="">— select —</option>` + Object.keys(STATE_NAMES).map((s) => `<option value="${s}" ${s === v ? "selected" : ""}>${s} — ${esc(STATE_NAMES[s])}</option>`).join("");
+  const countryOpts = (v?: string) => ["USA", "Canada"].map((k) => `<option ${k === (v || "USA") ? "selected" : ""}>${k}</option>`).join("");
+  const cityOpt = (v?: string) => v ? `<option value="${esc(v)}" selected>${esc(v)}</option>` : `<option value="">— locate to fill —</option>`;
+  const btypeList = ZT_BUILDING_TYPES.map((b) => `<option value="${esc(b)}"></option>`).join("");
+  const initCity = (pi.projectLocation ? pi.projectLocation.split(",")[0].trim() : "") || c.city || "";
+
   const card = h(`<div class="card">
     <div class="card-hd"><div class="list-ico" style="background:var(--red-soft)">${ICON.bolt()}</div><h3>Basic Info</h3><span class="sub">${p ? "editing the current project" : "creates a new project"}</span></div>
     <div class="grid cards-2" style="gap:12px;margin-top:6px">
       <div class="field"><label>Project name</label><input id="wz-name" placeholder="e.g. KP Parker Hospital" value="${esc(p?.name || "")}" /></div>
       <div class="field"><label>Client name <span style="color:var(--g400)">(report footer)</span></label><input id="wz-client" placeholder="e.g. Kaiser Permanente" value="${esc(pi.clientName || "")}" /></div>
-      <div class="field"><label>Project address</label><input id="wz-addr" placeholder="City, State, Country" value="${esc(p?.address || "")}" /></div>
-      <div class="field"><label>Pincode / ZIP</label><input id="wz-zip" placeholder="e.g. 92054" value="${esc(pi.pincode || store.rates.pincode || "")}" /></div>
+      <div class="field"><label>Document phase</label><input id="wz-dphase" placeholder="e.g. Schematic Design" value="${esc(pi.documentPhase || "")}" /></div>
+      <div class="field"><label>Document name</label><input id="wz-dname" placeholder="e.g. Architectural set Rev 3" value="${esc(pi.referenceDocument || "")}" /></div>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Project building type <span style="color:var(--g400)">(AIA / Zero Tool — pick or type your own)</span></label>
+      <input id="wz-btype" list="wz-btype-list" placeholder="e.g. Office, K12School, Hospital" value="${esc(pi.programType || "")}" />
+      <datalist id="wz-btype-list">${btypeList}</datalist>
     </div>
 
-    <div class="field" style="margin-top:10px"><label>Model type</label></div>
-    <div class="model-tiles" id="wz-models" style="margin-top:8px"></div>
+    <div class="subsection" style="margin-top:16px">Project Location <span class="line"></span></div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:6px">
+      <div class="field" style="flex:1;min-width:180px"><label>Pincode / ZIP</label><input id="wz-zip" placeholder="e.g. 92069" value="${esc(pi.pincode || c.pincode || "")}" /></div>
+      <button class="btn btn-sm btn-dark" id="wz-locate" type="button">${ICON.pin("x")} Locate</button>
+      <span id="wz-loc-status" style="font-size:12px;color:var(--g500);flex-basis:100%"></span>
+    </div>
+    <div class="grid cards-3" style="gap:12px;margin-top:8px">
+      <div class="field"><label>City</label><select id="wz-city" class="unit-pick" style="width:100%">${cityOpt(initCity)}</select></div>
+      <div class="field"><label>State</label><select id="wz-state" class="unit-pick" style="width:100%">${stateOpts(c.state)}</select></div>
+      <div class="field"><label>Country</label><select id="wz-country" class="unit-pick" style="width:100%">${countryOpts(c.country)}</select></div>
+    </div>
 
     <div class="subsection" style="margin-top:16px">Green Building Certification <span class="line"></span></div>
     <div class="grid cards-3" style="gap:12px;margin-top:6px">
@@ -149,10 +182,10 @@ function renderBasicInfo(host: HTMLElement, opts: { primaryLabel: string; onSave
 
     <div class="subsection" style="margin-top:16px">Weather File <span class="line"></span></div>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:6px">
-      <div class="field" style="flex:1;min-width:240px"><label>Nearest EPW / TMY station (by distance to pincode)</label>
-        <select id="wz-weather" class="unit-pick" style="width:100%"><option value="">${pi.weatherFile ? esc(pi.weatherFile) : "— find nearest to enter a pincode —"}</option></select></div>
+      <div class="field" style="flex:1;min-width:260px"><label>Nearest EPW file (name · type · distance to pincode)</label>
+        <select id="wz-weather" class="unit-pick" style="width:100%"><option value="">${pi.weatherFile ? esc(pi.weatherFile) + (pi.weatherFileType ? ` · ${esc(pi.weatherFileType)}` : "") : "— find nearest to a pincode —"}</option></select></div>
       <button class="btn btn-sm" id="wz-weather-find" type="button">${ICON.pin("x")} Find nearest 5</button>
-      <a class="btn btn-sm" id="wz-weather-map" href="https://www.ladybug.tools/epwmap/" target="_blank" rel="noopener" title="Open EPW map">EPW map ↗</a>
+      <a class="btn btn-sm" id="wz-weather-dl" href="#" download target="_blank" rel="noopener" title="Download all weather files (.zip)" style="pointer-events:none;opacity:.5">${ICON.download()} Download</a>
     </div>
 
     <div class="subsection" style="margin-top:16px">Code Compliance <span class="line"></span></div>
@@ -166,29 +199,52 @@ function renderBasicInfo(host: HTMLElement, opts: { primaryLabel: string; onSave
     </div>
   </div>`);
 
-  const tiles = card.querySelector("#wz-models")!;
-  MODELS.forEach((m) => {
-    const t = h(`<div class="model-tile ${m.key === sel ? "active" : ""} ${m.soon ? "soon" : ""}" data-k="${m.key}"><div class="mt-ico">${m.icon}</div><h4>${esc(m.name)}</h4><p>${esc(m.sub)}</p></div>`);
-    if (!m.soon) t.addEventListener("click", () => { sel = m.key; tiles.querySelectorAll(".model-tile").forEach((x) => x.classList.remove("active")); t.classList.add("active"); });
-    tiles.appendChild(t);
+  const citySel = card.querySelector("#wz-city") as HTMLSelectElement;
+  const stateSel = card.querySelector("#wz-state") as HTMLSelectElement;
+  const countrySel = card.querySelector("#wz-country") as HTMLSelectElement;
+
+  // Locate — derive city / state / country from the pincode.
+  card.querySelector("#wz-locate")!.addEventListener("click", async () => {
+    const zip = (card.querySelector("#wz-zip") as HTMLInputElement).value.trim();
+    if (!zip) { toast("Enter a pincode / ZIP first"); return; }
+    const status = card.querySelector("#wz-loc-status") as HTMLElement;
+    status.innerHTML = `<span class="spinner" style="width:11px;height:11px;vertical-align:middle"></span> Locating…`;
+    try {
+      const info = await geocodeAddress({ pincode: zip });
+      if (info.city) citySel.innerHTML = `<option value="${esc(info.city)}" selected>${esc(info.city)}</option>`;
+      if (info.state) stateSel.value = info.state;
+      if (info.country) countrySel.value = /canada/i.test(info.country) ? "Canada" : "USA";
+      c.pincode = zip; c.lat = info.lat; c.lon = info.lon; c.state = info.state || c.state; c.city = info.city || c.city; c.country = countrySel.value;
+      status.innerHTML = `<span style="color:var(--green,#16a34a)">✓ ${esc([info.city, info.stateName, info.country].filter(Boolean).join(", "))}</span>`;
+    } catch (e: any) { status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`; }
   });
 
-  // Weather picker — geocode the pincode, then rank the nearest stations.
+  // Weather picker — geocode the pincode, then rank the nearest real EPW files.
   const weatherSel = card.querySelector("#wz-weather") as HTMLSelectElement;
+  const dlLink = card.querySelector("#wz-weather-dl") as HTMLAnchorElement;
+  let nearFiles: WeatherFile[] = [];
+  const selectedFile = () => nearFiles.find((f) => f.name === weatherSel.value) || null;
+  const refreshLinks = () => {
+    const f = selectedFile();
+    const href = f ? (f.zipUrl || f.epwUrl) : "";        // whole-station .zip preferred
+    dlLink.href = href || "#"; dlLink.style.pointerEvents = href ? "auto" : "none"; dlLink.style.opacity = href ? "1" : ".5";
+  };
+  weatherSel.addEventListener("change", refreshLinks);
+
   const findWeather = async () => {
     const zip = (card.querySelector("#wz-zip") as HTMLInputElement).value.trim();
-    const addr = (card.querySelector("#wz-addr") as HTMLInputElement).value.trim();
-    if (!zip && !addr) { toast("Enter a pincode / address first"); return; }
+    if (!zip) { toast("Enter a pincode / ZIP first"); return; }
     const btn = card.querySelector("#wz-weather-find") as HTMLButtonElement; btn.disabled = true; const label = btn.innerHTML; btn.innerHTML = `<span class="spinner" style="width:11px;height:11px"></span> Finding…`;
     try {
-      const info = await geocodeAddress({ pincode: zip, city: addr });
-      const near = nearestStations(info.lat, info.lon, 5);
+      const info = await geocodeAddress({ pincode: zip });
+      nearFiles = await nearestWeatherFiles(info.lat, info.lon, 5);
+      if (!nearFiles.length) { toast("No weather files found nearby"); return; }
       const prev = weatherSel.value || pi.weatherFile || "";
-      weatherSel.innerHTML = `<option value="">— select a station —</option>` +
-        near.map((n) => { const v = `${n.station.name} — ${Math.round(n.miles)} mi`; return `<option value="${esc(v)}" ${v === prev ? "selected" : ""}>${esc(v)}</option>`; }).join("");
-      const map = card.querySelector("#wz-weather-map") as HTMLAnchorElement;
-      map.href = epwMapUrl(near[0].station);
-      toast(`✓ ${near.length} nearest stations`);
+      weatherSel.innerHTML = `<option value="">— select a weather file —</option>` +
+        nearFiles.map((f) => `<option value="${esc(f.name)}" ${f.name === prev ? "selected" : ""}>${esc(f.title)} · ${esc(f.type)} · ${Math.round(f.miles)} mi</option>`).join("");
+      if (!weatherSel.value) weatherSel.selectedIndex = 1; // default to the nearest
+      refreshLinks();
+      toast(`✓ ${nearFiles.length} nearest weather files`);
     } catch (e: any) { toast("Weather lookup failed — " + e.message); }
     finally { btn.disabled = false; btn.innerHTML = label; }
   };
@@ -197,17 +253,18 @@ function renderBasicInfo(host: HTMLElement, opts: { primaryLabel: string; onSave
   card.querySelector("#wz-create")!.addEventListener("click", async () => {
     const gv = (id: string) => (card.querySelector("#" + id) as HTMLInputElement).value.trim();
     const name = gv("wz-name") || "Untitled Project";
-    const addr = gv("wz-addr");
     const zip = gv("wz-zip");
+    const city = citySel.value, state = stateSel.value, country = countrySel.value;
+    const addr = [city, STATE_NAMES[state] || state, country].filter(Boolean).join(", ");
     const btn = card.querySelector("#wz-create") as HTMLButtonElement; btn.disabled = true;
     try {
       let proj: Project | null = store.currentProject;
       if (!proj) {
-        const res = await Projects.create(name, addr, sel);
+        const res = await Projects.create(name, addr, modelType);
         proj = res.project as Project;
       } else {
-        proj.name = name; proj.address = addr; proj.modelType = sel;
-        await Projects.update(proj.id, { name, address: addr, modelType: sel });
+        proj.name = name; proj.address = addr; proj.modelType = modelType;
+        await Projects.update(proj.id, { name, address: addr, modelType });
       }
       if (!proj) { toast("Create failed"); btn.disabled = false; return; }
       store.currentProject = proj;
@@ -215,16 +272,24 @@ function renderBasicInfo(host: HTMLElement, opts: { primaryLabel: string; onSave
         ...(store.projectInfo || {}),
         projectName: name,
         clientName: gv("wz-client") || undefined,
+        documentPhase: gv("wz-dphase") || undefined,
+        referenceDocument: gv("wz-dname") || undefined,
+        programType: gv("wz-btype") || undefined,
         pincode: zip || undefined,
+        projectLocation: [city, state].filter(Boolean).join(", ") || undefined,
         ratingSystem: (card.querySelector("#wz-rsys") as HTMLSelectElement).value || undefined,
         ratingVersion: gv("wz-rver") || undefined,
         ratingType: gv("wz-rtype") || undefined,
         weatherFile: weatherSel.value || undefined,
+        weatherFileType: selectedFile()?.type || (store.projectInfo || {}).weatherFileType,
         energyCodeStandard: gv("wz-code") || undefined,
         ashraeVersion: gv("wz-ashrae") || undefined,
       };
       store.projectInfo = info;
-      if (zip) store.rates.pincode = zip;
+      if (zip) c.pincode = zip;
+      if (state) c.state = state;
+      if (city) c.city = city;
+      if (country) c.country = country;
       await Projects.update(proj.id, { projectInfo: info } as any);
       (proj as any).projectInfo = info;
       emit();
@@ -253,7 +318,7 @@ function openBasicInfoModal(root: HTMLElement) {
   document.body.appendChild(overlay); requestAnimationFrame(() => overlay.classList.add("show"));
   const close = () => { overlay.classList.remove("show"); basicInfoModalOpen = false; setTimeout(() => overlay.remove(), 200); };
   overlay.querySelector(".x")!.addEventListener("click", close);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  // Intentionally NO backdrop-click close — the user must fill Basic Info or hit X.
   renderBasicInfo(overlay.querySelector("#bi-body") as HTMLElement, {
     primaryLabel: "Create & open wizard →",
     onSaved: () => { close(); goStep(root, 1); }, // land on step 1, now pre-filled
@@ -267,7 +332,7 @@ function stepModel(content: HTMLElement) {
   // injected right after the file/parse card by renderMarcus in embed mode.
   const mk = h(`<div></div>`);
   content.appendChild(mk);
-  renderMarcus(mk, { embedded: true, extraCard: remainingValuesCard });
+  renderMarcus(mk, { embedded: true });
 }
 
 const LEED_CERT_TYPES = ["New Construction", "Major Renovation", "Core and Shell", "New Construction — Healthcare", "Schools"];
@@ -372,8 +437,6 @@ function stepExcel(content: HTMLElement) {
     } catch (e: any) { status.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message || e)}</span>`; btn.disabled = false; }
   });
   content.appendChild(card);
-
-  content.appendChild(uploadsCard());
 }
 
 /* Upload slots — attach any supporting files to the project (stored server-side). */

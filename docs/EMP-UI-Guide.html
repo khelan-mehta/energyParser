@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>EMP — Energy Modeling Parser · UI Guide</title>
+<style>
+  :root { --red:#E4002B; --red-soft:rgba(228,0,43,.10); --g900:#0c0c0d; --g600:#52525b; --g500:#71717a; --g400:#a1a1aa; --g200:#e4e4e7; --g150:#eeeef0; --g100:#f4f4f5; --g50:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--g900); margin:0; background:#fff; font-size:12.5px; }
+  .cover { padding:56px 50px 34px; }
+  .cover .logo { display:inline-block; background:var(--red); color:#fff; font-weight:800; padding:8px 14px; border-radius:10px; letter-spacing:1px; font-size:16px; }
+  .cover h1 { font-size:32px; margin:20px 0 6px; }
+  .cover p { color:var(--g500); font-size:14px; margin:0; max-width:640px; }
+  .flow { margin-top:24px; display:flex; gap:8px; flex-wrap:wrap; }
+  .flow .step { border:1px solid var(--g200); border-radius:10px; padding:8px 12px; font-weight:700; font-size:12px; }
+  .flow .step b { color:var(--red); }
+  section { padding:34px 50px; page-break-before:always; }
+  .tooltip { background:var(--g900); color:#fff; border-radius:10px; padding:11px 15px; font-size:12.5px; position:relative; margin-bottom:20px; box-shadow:0 6px 18px rgba(0,0,0,.12); line-height:1.5; }
+  .tooltip::after { content:""; position:absolute; left:36px; bottom:-7px; width:14px; height:14px; background:var(--g900); transform:rotate(45deg); }
+  .tooltip .tag { display:inline-block; background:var(--red); color:#fff; font-size:9px; font-weight:800; letter-spacing:.5px; padding:2px 8px; border-radius:20px; margin-right:8px; vertical-align:middle; }
+  .sec-title { font-size:21px; font-weight:800; margin:0 0 2px; }
+  .sec-num { color:var(--red); }
+  .cols { display:grid; grid-template-columns:1.05fr .95fr; gap:22px; margin-top:16px; align-items:start; }
+  .panel-label { font-size:9px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--g400); margin-bottom:9px; }
+  .ui { border:1px solid var(--g200); border-radius:14px; padding:15px; background:var(--g50); }
+  .ui .hd { display:flex; align-items:center; gap:9px; margin-bottom:11px; }
+  .ui .ico { width:24px; height:24px; border-radius:7px; background:var(--red-soft); color:var(--red); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; }
+  .ui h4 { margin:0; font-size:13.5px; }
+  .ui .subh { font-size:10px; color:var(--g400); margin-left:6px; }
+  .field { margin-bottom:8px; }
+  .field label { display:block; font-size:8.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--g400); margin-bottom:3px; }
+  .box { border:1px solid var(--g200); border-radius:8px; background:#fff; padding:6px 9px; font-size:11.5px; color:var(--g600); min-height:28px; }
+  .box.sel { position:relative; } .box.sel::after { content:"▾"; position:absolute; right:9px; color:var(--g400); }
+  .box.dis { background:var(--g100); color:var(--g500); }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .btn { display:inline-block; background:var(--g900); color:#fff; border-radius:8px; padding:6px 11px; font-size:10.5px; font-weight:700; }
+  .btn.red { background:var(--red); } .btn.sm { padding:3px 8px; font-size:9.5px; } .btn.gh { background:#fff; color:var(--g600); border:1px solid var(--g200); }
+  .sub { font-size:9px; font-weight:800; letter-spacing:1px; color:var(--g400); text-transform:uppercase; margin:13px 0 8px; border-top:1px solid var(--g150); padding-top:9px; }
+  .bar { height:20px; border-radius:4px; background:linear-gradient(90deg,#3bb54a,#f7e017,#ed1c24); position:relative; margin:22px 6px 8px; }
+  .bar .mk { position:absolute; top:-6px; bottom:-6px; width:0; border-left:2px solid #0c0c0d; }
+  .bar .mk.dash { border-left:2px dashed #9a9a9f; } .bar .mk.dk { border-left:2px dashed #0c0c0d; }
+  .bar .lbl { position:absolute; top:-18px; font-size:9.5px; font-weight:700; transform:translateX(-50%); }
+  .tiles { display:flex; gap:6px; } .tile { flex:1; border:1px solid var(--g200); border-radius:9px; padding:8px; text-align:center; font-size:10px; }
+  .tile.on { border-color:var(--red); background:var(--red-soft); } .tile .mi { font-size:16px; }
+  table.mini { width:100%; border-collapse:collapse; font-size:10px; } table.mini th, table.mini td { border:1px solid var(--g150); padding:4px 6px; text-align:left; }
+  table.mini th { background:var(--g100); font-size:8.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--g500); }
+  .acc { border:1px solid var(--g200); border-radius:9px; padding:8px 11px; margin-top:6px; font-size:11px; display:flex; justify-content:space-between; color:var(--g600); }
+  .stat { border:1px solid var(--g200); border-radius:10px; padding:9px; } .stat .v { font-size:16px; font-weight:800; } .stat .l { font-size:8.5px; color:var(--g400); text-transform:uppercase; letter-spacing:.5px; }
+  .info h5 { margin:0 0 7px; font-size:12.5px; } .info ul { margin:0 0 11px; padding-left:15px; } .info li { margin-bottom:5px; line-height:1.45; color:var(--g600); } .info li b { color:var(--g900); }
+  .chip { display:inline-block; background:var(--g100); border:1px solid var(--g200); border-radius:20px; padding:2px 9px; font-size:9.5px; margin:2px 3px 2px 0; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <span class="logo">EMP</span>
+  <h1>Energy Modeling Parser — UI Guide</h1>
+  <p>The guided project flow, section by section, matching the exact fields in the app. Each page: the UI (left), a tooltip (top), and what it does (right).</p>
+  <div class="flow">
+    <div class="step"><b>1</b> Basic Info</div><div class="step"><b>2</b> Utility Rates</div><div class="step"><b>3</b> Model</div>
+    <div class="step"><b>4</b> Project Analysis</div><div class="step"><b>5</b> Excel</div><div class="step"><b>6</b> Report</div>
+  </div>
+</div>
+
+<!-- 1 · BASIC INFO -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Capture the project up front — details, location, certification, building type &amp; weather file. Opens as a <b>locked popup</b> on “New Project” (no outside-click close); editable again as step 1.</div>
+  <h2 class="sec-title"><span class="sec-num">1 ·</span> Basic Info</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">⚡</div><h4>Basic Info</h4><span class="subh">creates a new project</span></div>
+        <div class="row2">
+          <div class="field"><label>Project name</label><div class="box">e.g. KP Parker Hospital</div></div>
+          <div class="field"><label>Client name (report footer)</label><div class="box">e.g. Kaiser Permanente</div></div>
+          <div class="field"><label>Document phase</label><div class="box">e.g. Schematic Design</div></div>
+          <div class="field"><label>Document name</label><div class="box">e.g. Architectural set Rev 3</div></div>
+        </div>
+        <div class="field"><label>Project building type (AIA / Zero Tool — pick or type your own)</label><div class="box sel">e.g. Office, K12School, Hospital</div></div>
+        <div class="sub">Project Location</div>
+        <div class="field"><label>Pincode / ZIP</label><div class="box">92069 <span class="btn sm" style="float:right">📍 Locate</span></div></div>
+        <div class="row3">
+          <div class="field"><label>City</label><div class="box sel">San Marcos</div></div>
+          <div class="field"><label>State</label><div class="box sel">CA — California</div></div>
+          <div class="field"><label>Country</label><div class="box sel">USA</div></div>
+        </div>
+        <div class="sub">Green Building Certification</div>
+        <div class="row3">
+          <div class="field"><label>Rating system</label><div class="box sel">NA / LEED / GRIHA…</div></div>
+          <div class="field"><label>Version</label><div class="box">e.g. v4.1</div></div>
+          <div class="field"><label>Type</label><div class="box">e.g. New Construction</div></div>
+        </div>
+        <div class="sub">Weather File</div>
+        <div class="field"><label>Nearest EPW file (name · type · distance to pincode)</label>
+          <div class="box sel">…725190_TMY3 · TMY3 · 5 mi <span class="btn sm gh" style="float:right">⬇ Download</span> <span class="btn sm" style="float:right;margin-right:5px">📍 Find nearest 5</span></div></div>
+        <div class="sub">Code Compliance</div>
+        <div class="row2">
+          <div class="field"><label>Energy Code Name (manual)</label><div class="box">e.g. ASHRAE 90.1-2019 / IECC 2021</div></div>
+          <div class="field"><label>Reference ASHRAE version</label><div class="box">e.g. ASHRAE 90.1-2019</div></div>
+        </div>
+        <div style="margin-top:12px"><span class="btn red" style="width:100%;text-align:center;display:block">Create project &amp; continue →</span></div>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li><b>Pincode → Locate</b> geocodes the ZIP and fills <b>City / State / Country</b> as separate dropdowns; stores lat/lon for rate sourcing.</li>
+        <li><b>Building type</b> = the AIA / Zero Tool list in a datalist (also free-typed); drives the benchmark EUI in step 3.</li>
+        <li><b>Rating system</b> options: <span class="chip">NA</span><span class="chip">LEED</span><span class="chip">GRIHA</span><span class="chip">IGBC</span><span class="chip">BREEAM</span><span class="chip">Estidama</span><span class="chip">Manual input</span></li>
+        <li><b>Weather File</b> — nearest 5 real EPW files from the DOE index, each with name + type (TMY/TMY3) + distance; <b>Download</b> pulls the whole station bundle as <b>.zip</b>.</li>
+        <li>Model type is <i>not</i> set here — it’s detected on parse (step 3).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 2 · UTILITY RATES -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Auto-source <b>electricity, gas, carbon &amp; water</b> rates (with citations) from the Basic-Info pincode. Each rate’s <b>View</b> opens its Project Utility Profile.</div>
+  <h2 class="sec-title"><span class="sec-num">2 ·</span> Utility Rates</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">$</div><h4>Project Location</h4></div>
+        <div class="box" style="margin-bottom:9px">Pincode / ZIP <b>92069</b> · San Marcos, CA <span style="color:var(--g400)">— set in Basic Info</span></div>
+        <span class="btn">📍 Locate &amp; source rates</span>
+        <div class="sub">Final Rates &amp; Sources</div>
+        <table class="mini">
+          <tr><th>Utility Type</th><th>Rate</th><th>Unit</th><th>Vs. states</th><th>Source</th></tr>
+          <tr><td>⚡ Electricity</td><td>0.26 ✎</td><td>$/kWh ▾</td><td>📊 View</td><td>Find · Sources · ⧉</td></tr>
+          <tr><td>🔥 Natural Gas</td><td>1.45 ✎</td><td>$/therm ▾</td><td>📊 View</td><td>Find · Sources · ⧉</td></tr>
+          <tr><td>🌫 Carbon</td><td>0.21 ✎</td><td>kg/kWh ▾</td><td>📊 View</td><td>Find · Sources · ⧉</td></tr>
+          <tr><td>💧 Water</td><td>— ✎</td><td>$/kGal ▾</td><td>📊 View</td><td>Find · Sources · ⧉</td></tr>
+        </table>
+        <div class="sub">View → Project Utility Profile</div>
+        <div class="bar">
+          <div class="mk dash" style="left:20%"><span class="lbl" style="color:#9a9a9f">0.13</span></div>
+          <div class="mk dk" style="left:60%"><span class="lbl">0.24</span></div>
+          <div class="mk" style="left:73%"><span class="lbl" style="top:2px">0.26</span></div>
+        </div>
+        <div class="acc">💧 Water charges detail (water · irrigation · sewer) <span>▸</span></div>
+        <div class="acc">District energy (LEED Option 1, optional) <span>▸</span></div>
+        <div class="acc">Saved Rate Sets <span>▸</span></div>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li>Table columns: <b>Utility Type · Rate · Unit · Vs. other states · Source</b>; rows for electricity, natural gas, carbon, water.</li>
+        <li><b>Find</b> pulls from EIA / NREL URDB / Cambium / eGRID. The <b>Sources</b> popup lists every option with its <b>full citation</b> (no truncation) and highlights the one <b>✓ in use</b>.</li>
+        <li>Typing a value (✎) requires a <b>source name + link</b> popup before it’s accepted.</li>
+        <li><b>View</b> → gradient <b>Utility Profile</b>: green (US-lowest) → yellow (US-avg) → red (US-highest); dashed US &amp; State-average lines, solid local line. Labels auto-stack so they <b>never overlap</b>. <b>Export PPT</b> writes editable shapes.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 3 · MODEL -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Upload &amp; parse the model, then complete <b>setup inline</b> (assignment + AIA info + QA/QC). Parsing is locked until rates are set in step 2; completing setup unlocks Excel.</div>
+  <h2 class="sec-title"><span class="sec-num">3 ·</span> Model</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">📑</div><h4>Model Parser</h4></div>
+        <div class="tiles" style="margin-bottom:10px"><div class="tile on"><div class="mi">🏢</div>eQUEST</div><div class="tile"><div class="mi">📑</div>TRACE 3D Plus</div><div class="tile"><div class="mi">🧪</div>IES-VE</div></div>
+        <div class="hd" style="margin-bottom:8px"><div class="ico">📄</div><h4>Files</h4><span class="btn red sm" style="margin-left:auto">⚡ Parse</span></div>
+        <div class="box" style="text-align:center;padding:12px;border-style:dashed">Drop or click to upload · .SIM / .inp / .pdf</div>
+        <div class="sub">Complete setup to continue</div>
+        <div class="field"><label>Model assignment (per model: Category · Rotation)</label><div class="box">Proposed · LEED Baseline · Code Baseline</div></div>
+        <div class="field"><label>Project information</label><div class="box">Gross Conditioned Floor Area (ft²): 13,652</div></div>
+        <div class="field"><label>AIA information</label><div class="box" style="font-size:10.5px">Benchmark EUI + Calculate · Target Savings % · LEED Version / Type / Subcategory · Energy Code Standard</div></div>
+        <div class="field"><label>Performance goals (LEED · Code)</label><div class="box">Energy · Carbon · Energy-Cost savings %</div></div>
+        <div class="sub">QA/QC</div>
+        <div class="row3">
+          <div class="field"><label>Author</label><div class="box">Khelan Mehta</div></div>
+          <div class="field"><label>Date</label><div class="box">2026-07-12</div></div>
+          <div class="field"><label>Uncertainty Factor %</label><div class="box">0</div></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Energy Code Includes Process Loads?</label><div class="box sel">Yes</div></div>
+          <div class="field"><label>Model type (extracted)</label><div class="box dis">trace</div></div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--g600)">☐ Model includes adjacent shading structures (neighboring buildings &amp; trees)</div>
+        <div style="margin-top:10px"><span class="btn gh sm">Save as draft</span> <span class="btn red sm">⚡ Populate</span></div>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li>Parses eQUEST (.SIM/.inp) or TRACE (PDF) into normalized baseline &amp; proposed rows. <b>Parse is gated</b> on rates being set in step 2.</li>
+        <li>The old setup <b>popup is gone</b> — its form is inline and must be completed to unlock Excel.</li>
+        <li>Utility-rate inputs are hidden here (set in step 2). <b>Project information</b> is trimmed to <b>Gross Floor Area</b>; “Baseline information” is now <b>AIA information</b>.</li>
+        <li><b>QA/QC</b> pre-fills Author = signed-in user, Date = today. <b>Process loads</b>, the <b>extracted model type</b>, and the <b>adjacent-shading</b> toggle sit beneath the uncertainty factor.</li>
+        <li>Below: <span class="chip">Utility Rates Used</span><span class="chip">AI Search (collapsed)</span><span class="chip">Logs (collapsed)</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · PROJECT ANALYSIS -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Baseline-vs-proposed dashboards computed from the parsed models — its own step between Model and Excel.</div>
+  <h2 class="sec-title"><span class="sec-num">4 ·</span> Project Analysis</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">📊</div><h4>Project Analysis</h4></div>
+        <div class="row2" style="margin-bottom:8px">
+          <div class="stat"><div class="l">Models · BL / Prop</div><div class="v">6</div></div>
+          <div class="stat"><div class="l">Avg EUI · kBtu/ft²</div><div class="v">42.1</div></div>
+        </div>
+        <div class="row2" style="margin-bottom:10px">
+          <div class="stat"><div class="l">Total Energy · kBtu</div><div class="v">1.2M</div></div>
+          <div class="stat"><div class="l">Total Carbon · kg CO₂e</div><div class="v">84k</div></div>
+        </div>
+        <div class="row2" style="margin-bottom:10px">
+          <div class="box" style="height:60px;text-align:center;line-height:60px;color:var(--g400)">End-Use Breakdown</div>
+          <div class="box" style="height:60px;text-align:center;line-height:60px;color:var(--g400)">EUI by Model</div>
+        </div>
+        <div class="sub">Key Metrics</div>
+        <table class="mini"><tr><th>Metric</th><th>Model 1</th><th>Model 2</th></tr>
+          <tr><td>Total Energy (kBtu)</td><td>…</td><td>…</td></tr><tr><td>EUI (kBtu/ft²)</td><td>…</td><td>…</td></tr>
+          <tr><td>Electricity / Gas (kBtu)</td><td>…</td><td>…</td></tr><tr><td>Total Cost ($) · Carbon (kg)</td><td>…</td><td>…</td></tr></table>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li>Promoted into its <b>own 4th section</b> (was inside the Model step).</li>
+        <li><b>Stat cards:</b> Models, Avg EUI, Total Energy, Total Carbon.</li>
+        <li><b>Charts:</b> End-Use Breakdown &amp; EUI by Model.</li>
+        <li><b>Key Metrics table:</b> Total Energy, EUI, Electricity, Gas, Total Cost, Carbon, Water, Floor Area, Building WWR, Peak Elec — per model.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · EXCEL -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Builds the <b>Energy Results Comparison</b> workbook (.xlsx) from the parsed models, utility rates &amp; project info.</div>
+  <h2 class="sec-title"><span class="sec-num">5 ·</span> Excel</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">▦</div><h4>Generate the Excel workbook</h4><span class="subh">Energy Results Comparison (.xlsx)</span></div>
+        <p style="font-size:11px;color:var(--g500)">Builds the comparison workbook from the parsed models, the utility rates, and your project info.</p>
+        <span class="btn red">⬇ Generate &amp; download Excel</span>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li>One click builds the workbook and downloads it; the same file is handed to the Report step.</li>
+        <li>Field mapping follows the revamp — removed/moved inputs leave their cells blank.</li>
+        <li>The old <b>Supporting uploads</b> panel has been removed from this step.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · REPORT -->
+<section>
+  <div class="tooltip"><span class="tag">TOOLTIP</span>Auto-fills the formatted <b>Energy Model Report (.docx)</b> from the step-5 workbook and the project details.</div>
+  <h2 class="sec-title"><span class="sec-num">6 ·</span> Report</h2>
+  <div class="cols">
+    <div>
+      <div class="panel-label">UI — exact fields</div>
+      <div class="ui">
+        <div class="hd"><div class="ico">📕</div><h4>Word Report</h4></div>
+        <div class="field"><label>1 · Upload the comparison workbook</label><div class="box">auto-loaded from step 5 (upload overrides)</div></div>
+        <div class="field"><label>2 · Insert images</label><div class="box" style="border-style:dashed;text-align:center">drop chart / render images</div></div>
+        <div class="field"><label>3 · Generate the report</label><div><span class="btn red">⚡ Generate report</span></div></div>
+      </div>
+    </div>
+    <div class="info">
+      <div class="panel-label">Information</div>
+      <h5>What it does</h5>
+      <ul>
+        <li>Three steps: <b>upload the workbook → insert images → generate</b> the .docx.</li>
+        <li>Merges project metadata (client, location, certification, phase, weather) + the comparison results into the narrative report.</li>
+        <li>Uses the Excel from step 5 automatically; an upload still overrides it.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
